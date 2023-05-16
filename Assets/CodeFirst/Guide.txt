@@ -1,0 +1,54 @@
+﻿1) Introduction
+2) Setting up character and wearable folder structure.
+3) Setting Wearables using the custom inspector UI.
+4) Setting wearables using C# code.
+
+-----------------------
+Introduction
+-----------------------
+The wearable controller can be used to setup wearables for your characters. Normally in the absence of any dedicated controller to use character wearables like clothes, hair etc, we would need to write code which is hard to maintain and extend.
+This wearable controller can be used to easily setup and apply wearables like clothes, accessories etc to the characters. Furthermore, this wearable controller allowes to group wearables and then use them as an entire outfit for the character.
+
+Another important thing is that this Wearable Controller has only been developed and tested with .fbx assets which have bones for movement and asset shape modification. You are free to modify the source code to have it behave in accordance with your project requirements.
+
+There are two ways to use this controller:
+1) Using the custom inspector UI to add the wearables.
+2) Using the C# code to change wearables on the fly.
+
+There is also a very specific folder structure that this wearable controller uses. This folder structure cna be easily modified by updating the controller source code.
+
+-------------------------------------------------------------
+Setting up character and wearable folder structure
+-------------------------------------------------------------
+The folder structure should be like this:
+Assets|
+--------Resources|
+------------------------Characters|
+--------------------------------{Character Name}|
+----------------------------------------Wearables (This folder should have the wearable meshes)
+
+
+The above folder setting can be easily changed in the source code as per the project requirements.
+Also don't forget to add the Wearable Controller class component to the character before continuing on to the next steps.
+
+----------------------------------------------------------
+Setting Wearables using the custom inspector UI
+----------------------------------------------------------
+It is very easy to setup character wearables in the custom inspector UI. Follow these steps to add a new wearable using the custom UI:
+1) Provide the Wearable Name. This should match with the mesh file name of the wearable asset.
+2) Provide the Character folder name. This is the folder which has the (Wearables) folder.
+3) Provide the Wearable Type using the drop down list. Every wearable belongs to a particular wearable type so that two wearables of the same type will not be applied to the character. New wearable types can be added to wearable type C# enumeration and it will be then available in the custom UI dropdown list.
+4) Click on the Add Wearable button. Added wearable will be shown in the list just below this button.The added wearable can be Applied, Removed and Deleted from the list by clicking on the appropriate buttons.
+5) The changes made in the custom inspector window are permanent and will persist even when the Unity dev environment is closed and restarted.
+
+------------------------------------------
+Setting wearables using C# code
+------------------------------------------
+Setting up wearables using the C# code is very easy. Following is the sample code to add a new wearable to a wearable controller:
+
+CharacterWearableController controller;
+Wearable wearable = Wearable.CreateWearable();
+wearable.Name = "wearableName";
+wearable.CharacterFolderName = "characterFolderName";
+wearable.WearableType = WearableType.Top;
+controller.AddWearable(wearable);
