@@ -1,0 +1,176 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Init
+#pragma kernel UpdateV
+#pragma kernel UpdateP
+
+RWStructuredBuffer<float4> pos; //position
+RWStructuredBuffer<float4> norm; //normal
+RWStructuredBuffer<float3> vel; //velocity
+
+uint2 nodeNum;  // row: x  col:y
+float ksStretch;
+float ksShear;
+float ksBend;
+float wind;
+float dt;
+
+#define size 2
+#define springIniLen 0.1
+#define mass 1
+#define damp 1
+
+// collision with sphere
+uniform float3 sphere;
+#define radius 1
+
+static uint2 StretchSpringDir[4] = {{1,0},{0,1},{-1,0},{0,-1}};
+static uint2 ShearSpringDir[4] = {{2,0},{0,2},{-2,0},{0,-2}};
+static uint2 BendSpringDir[4] = {{1,1},{-1,1},{-1,-1},{1,-1}};
+static uint2 NormDir[4] = {{1,0},{0,1},{-1,0},{0,-1},};
+
+static bool hasThisPos(uint2 id) {
+    return id.x >= 0 && id.x < nodeNum.x && id.y >=0 && id.y < nodeNum.y;
+}
+
+static float3 computeForce(uint2 id)
+{
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 velocity = vel[index];
+    float3 normal = norm[index].xyz;
+    float3 f = float3(0,0,0);
+    // stretch
+    for (uint i = 0; i < 4; i++) {
+        uint2 next_id = id + StretchSpringDir[i];
+        uint next_index = next_id.x + next_id.y * nodeNum.x;
+        float3 next_position = pos[next_index].xyz;
+        if (hasThisPos(next_id)) {
+            // Hooke's law
+            float3 pos_diff = next_position-position;
+            float distance = length(pos_diff);
+            float3 pos_dir = pos_diff/distance;
+            // calculate spring force
+            f += ksStretch*(distance-springIniLen)*pos_dir;
+        }
+    }
+    // bend
+    for (uint i = 0; i < 4; i++) {
+        uint2 next_id = id + ShearSpringDir[i];
+        uint next_index = next_id.x + next_id.y * nodeNum.x;
+        float3 next_position = pos[next_index].xyz;
+        if (hasThisPos(next_id)) {
+            // Hooke's law
+            float3 pos_diff = next_position-position;
+            float distance = length(pos_diff);
+            float3 pos_dir = pos_diff/distance;
+            // calculate spring force
+            f += ksBend*(distance-2*springIniLen)*pos_dir;
+        }
+    }
+    // shear
+    for (uint i = 0; i < 4; i++) {
+        uint2 next_id = id + BendSpringDir[i];
+        uint next_index = next_id.x + next_id.y * nodeNum.x;
+        float3 next_position = pos[next_index].xyz;
+        if (hasThisPos(next_id)) {
+            // Hooke's law
+            float3 pos_diff = next_position-position;
+            float distance = length(pos_diff);
+            float3 pos_dir = pos_diff/distance;
+            // calculate spring force
+            f += ksShear*(distance-1.414f*springIniLen)*pos_dir;
+        }
+    }
+    //gravity
+    f += float3(0,-9.8,0) * mass;
+    //wind
+    f += 2*dot(normal, float3(0,0,wind)-velocity)*normal;
+    //damp
+    f += - damp * velocity;
+    return f;
+}
+
+// collision with sphere
+static void checkSphereCollision(uint2 id){
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 velocity = vel[index];
+    float s_distance = distance(position, sphere);
+    float safe_radius = radius + 0.02f;
+    if (s_distance < safe_radius) {
+        float3 s_pos_dir = normalize(position - sphere);
+        position = position - (s_distance-safe_radius)*s_pos_dir;
+        velocity = velocity - dot(velocity,s_pos_dir)*s_pos_dir;
+        pos[index] = float4(position,1);
+        vel[index] = velocity;
+    }
+}
+
+static void updateNorm(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 normal = float3(0,0,0);
+    for (uint i = 0; i < 4; i++) {
+        uint j = (i + 1) % 4;
+        uint2 id1 = id + NormDir[i];
+        uint2 id2 = id + NormDir[j];
+        if (hasThisPos(id1) && hasThisPos(id2)){
+            float3 p1 = pos[id1.x + id1.y * nodeNum.x].xyz;
+            float3 p2 = pos[id2.x + id2.y * nodeNum.x].xyz;
+            float3 e1 = p1 - position;
+            float3 e2 = p2 - position;
+            float3 n = normalize(cross(e1,e2));
+            normal += n;
+            break;
+        }
+    }
+    normal = normalize(normal);
+    norm[index] = float4(normal,0);
+}
+
+static void updateVelocity(uint2 id){
+    uint index = id.x + id.y * nodeNum.x;
+    float3 f = computeForce(id);
+    float3 acceleration = f/mass;
+    float3 velocity = vel[index];
+    velocity = velocity + acceleration * dt;
+    vel[index] = velocity;
+    updateNorm(id);
+}
+
+static void updatePos(uint2 id){
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 velocity = vel[index];
+    position += velocity * dt;
+    pos[index] = float4(position,1);
+    checkSphereCollision(id);
+}
+
+#define THREAD_X 8
+#define THREAD_Y 8
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void Init (uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x + id.y * nodeNum.x;
+    pos[index] = float4(id.x * springIniLen,0,id.y * springIniLen,0);
+    vel[index] = float3(0,0,0);
+    norm[index] = float4(0,1,0,0);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateV (uint3 id : SV_DispatchThreadID)
+{
+    updateVelocity(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateP (uint3 id : SV_DispatchThreadID)
+{
+    if(id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1) ){
+        //pin two corner
+        return;
+    }
+    updatePos(id.xy);
+}
