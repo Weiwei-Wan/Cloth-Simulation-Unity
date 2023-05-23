@@ -6,6 +6,7 @@ public class WindFast : MonoBehaviour
 {
     const int row = 16;
     const int col = 16;
+    const int radius = 2;
     const int node_num = row*col;
     const int element_num = (row-1) * (col-1) * 2;
     int[] element_idx = new int[element_num * 3];
@@ -34,7 +35,6 @@ public class WindFast : MonoBehaviour
     const int bend_num = row*(col-2) + col*(row-2);
     const int constraint_num = stretch_num + shear_num + bend_num;
 
-    List<int> stable_ind = new List<int>();
     float[,] L = new float[node_num*3, node_num*3];
     float[,] J = new float[node_num*3, constraint_num*3];
     float[,] Q = new float[node_num*3, node_num*3];
@@ -76,7 +76,6 @@ public class WindFast : MonoBehaviour
             {
                 int idx = j * row + i;
                 pos[idx] = pos_pre[idx] = initial_pos[idx] = node_pos[idx] = new Vector3((i-row/2)* dx_space1, (j-col/2)* dx_space2, 0);
-                uvs[idx] = new Vector2((float)i / (row - 1), (float)j / (col - 1));
             }
         }
 
@@ -97,7 +96,6 @@ public class WindFast : MonoBehaviour
         //add these two triangles to the mesh
         mesh.vertices = node_pos;
         mesh.triangles = element_idx;
-        mesh.uv = uvs;
     }
 
     void ConstructMatrix(int st, int ed, int type)
@@ -205,11 +203,13 @@ public class WindFast : MonoBehaviour
             finalPos[i].z = result[3*i+2];
             // collision with sphere
             float s_distance = Vector3.Distance(finalPos[i], sphere.transform.position);
-            if (s_distance < 2.0f) {
-                Vector3 s_pos_dir = (finalPos[i] - sphere.transform.position)/s_distance;
-                finalPos[i] = sphere.transform.position + 1.9f*s_pos_dir;
+            float safe_radius = radius + 0.05f;
+            if (s_distance < safe_radius) {
+                Vector3 s_pos_dir = Vector3.Normalize(finalPos[i] - sphere.transform.position);
+                finalPos[i] = finalPos[i] - (s_distance-safe_radius)*s_pos_dir;
+                //velocity[i] = velocity[i] - Vector3.Dot(velocity[i],s_pos_dir)*s_pos_dir;
             }
-        }
+        }            
         return finalPos;
     }
 
@@ -217,7 +217,7 @@ public class WindFast : MonoBehaviour
     {
         for (int i = 0; i < node_num; i++)
         {
-            f_ext[i] = new Vector3(0, -0.001f*gravity, 0.001f*frontWindForce);
+            f_ext[i] = new Vector3(0, -gravity, frontWindForce)*node_mass;
         }
     }
 
@@ -267,12 +267,6 @@ public class WindFast : MonoBehaviour
         mesh.vertices = node_pos;
         mesh.RecalculateNormals();
     }
-
-    // set up the frame number each second default=60
-    // void Awake()
-    // {
-    //     Application.targetFrameRate = 60;
-    // }
 
     private void Update()
     {

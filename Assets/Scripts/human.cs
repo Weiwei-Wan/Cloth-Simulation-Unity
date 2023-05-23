@@ -2,59 +2,60 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class human : MonoBehaviour
-{
+public class human : MonoBehaviour {
     Mesh mesh;
     MeshFilter meshFilter;
     private GameObject ObjHuman;
+    const int radius = 1;
 
-    public float gravity;
-    public float frontWindForce;
-    public float Damp;
-    public float Constrain;
-    public float ksStretch;
-    public float ksShear;
-    public float ksBend;
     public int method;
     public string[] method_options;
 
-    const int col = 40;
-    const int row = 8;
+    bool upLeftFixed = true;
+    bool upRightFixed = true;
+    bool downLeftFixed = false;
+    bool downRightFixed = false;
+
+    float gravity = 9.8f;
+    float frontWindForce = -2;
+    float Damp = 1;
+
+    float ksStretch = 10000;
+    float ksShear = 10000;
+    float ksBend = 10000;
+
+    const int col = 100;
+    const int row = 10;
     const int node_num = row * col;
     const int element_num = row * col * 2;
     int[] element_idx = new int[element_num * 3];
 
-    const float dress_size1 = 1.5f;
-    const float dress_size2 = 1.5f;
+    float springIniLen = 0.1f;
+    float stretchSpringLen;
+    float shearSpringLen;
+    float bendSpringLen;
+    float node_mass = 1;
+    float dt = 0.002f;
 
-    float node_mass = 1.0f;
-    const int loopNum = 1;
-    const int frameNum = 60;
-    float dt = 1/((float) loopNum*frameNum);
-
-    Vector2[] uvs = new Vector2[node_num];
+    const float dress_size1 = 1.8f;
+    const float dress_size2 = 1.2f;
 
     // 3 forces in string-nodes system
-    // stretch: string neighbor 2 nodes
-    const int stretch_num = row*col*2-col;
-    // shear: string diagonal 2 nodes
-    const int shear_num = row*col*2-2*col;
-    // blend: next interval 1 nodes
-    const int bend_num = row*col*2-2*col;
-    const int constraint_num = stretch_num + shear_num + bend_num; 
-    Vector3[] d_springs = new Vector3[constraint_num]; // vec3(pos_x, pox_y, spring_type)
+    int[,] StretchSpringDir = {{1,0},{0,1},{-1,0},{0,-1}};
+    int[,] ShearSpringDir = {{2,0},{0,2},{-2,0},{0,-2}};
+    int[,] BendSpringDir = {{1,1},{-1,1},{-1,-1},{1,-1}};
+    int[,] NormDir = {{1,0},{0,1},{-1,0},{0,-1},};
     
     Vector3[] pos = new Vector3[node_num];
-    Vector3[] initial_pos = new Vector3[node_num];
     Vector3[] pos_pre = new Vector3[node_num];
     Vector3[] pos_prepre = new Vector3[node_num];
+    Vector3[] initial_pos = new Vector3[node_num];
     Vector3[] force = new Vector3[node_num];
     Vector3[] velocity = new Vector3[node_num];
+    Vector3[] norm = new Vector3[node_num];
     Vector3[] velocity_pre = new Vector3[node_num];
     Vector3[] acceleration = new Vector3[node_num];
     Vector3[] acceleration_pre = new Vector3[node_num];
-    Vector3[] offset = new Vector3[node_num];
-    Vector3 f_ab = Vector3.zero;
 
     // for implict Jacobian
     float[] I = {1,0,0,0,1,0,0,0,1};
@@ -62,15 +63,16 @@ public class human : MonoBehaviour
     float[,,] df = new float[node_num, node_num, 9];
     Vector3[] b = new Vector3[node_num];
 
-    void Start()
+    void Awake()
     {
-        Debug.Log(dt);
         meshFilter = GetComponent<MeshFilter>();
         mesh = new Mesh();
         meshFilter.mesh = mesh;
-        ObjHuman = GameObject.Find("FinalBaseMesh");
+        ObjHuman = GameObject.Find("human");
+
         drawTriangle();
         InitConstraint();
+        StartCoroutine(StartAsync());
     }
 
     void drawTriangle()
@@ -81,11 +83,10 @@ public class human : MonoBehaviour
             {
                 int idx = j * col + i;
                 float theta = i*2*Mathf.PI/col;
-                pos[idx] = pos_pre[idx] = pos_prepre[idx] = initial_pos[idx] = ObjHuman.transform.position + new Vector3((0.5f*j+dress_size1)*Mathf.Cos(theta), 2.2f-j, (0.5f*j+dress_size2)*Mathf.Sin(theta));
-                uvs[idx] = new Vector2((float)-Mathf.Cos(theta), (float)-Mathf.Sin(theta));
+                pos[idx] = pos_pre[idx] = pos_prepre[idx] = initial_pos[idx] = ObjHuman.transform.position + new Vector3((0.5f*j+dress_size1)*Mathf.Cos(theta), 10.5f-((float) j/1.5f), (0.5f*j+dress_size2)*Mathf.Sin(theta));
             }
         }
-        print("drawTriangle");
+
         // generate triangle for the mesh
         int cnt = 0;
         for (int j = 0; j < row-1; j++)
@@ -110,82 +111,109 @@ public class human : MonoBehaviour
         }
         // add these two triangles to the mesh
         mesh.vertices = pos;
-        mesh.triangles = element_idx;  // int[]
-        mesh.uv = uvs;
+        mesh.triangles = element_idx; 
     }
 
-    void InitConstraint()
-    {
-        // the inner spring
-        int cnt = 0;
-        for (int j = 0; j < col; j++)
-        {
-            for (int i = 0; i < row; i++)
-            {
-                int idx = i * col + j;
-                // stretch
-                if (j == 0) {d_springs[cnt++] = new Vector3(idx+col-1, idx, 0);}
-                if (j < col - 1) d_springs[cnt++] = new Vector3(idx, idx + 1, 0);
-                if (i < row - 1) d_springs[cnt++] = new Vector3(idx, idx + col, 0);
-                // bend
-                if (j == 0 || j==1) {d_springs[cnt++] = new Vector3(idx+col-2, idx, 1);}
-                if (j < col - 2) d_springs[cnt++] = new Vector3(idx, idx + 2, 1); 
-                if (i < row - 2) d_springs[cnt++] = new Vector3(idx, idx + col*2, 1); 
-                // shear
-                if (i < row - 1) {
-                    if (j < col-1) {
-                        d_springs[cnt++] = new Vector3(idx, idx + 1 + col, 2);
-                        d_springs[cnt++] = new Vector3(idx + 1, idx + col, 2);
-                    }
-                    else {
-                        d_springs[cnt++] = new Vector3(idx + 1, idx, 2);
-                        d_springs[cnt++] = new Vector3(idx + col, idx-col+1, 2);
-                    }
-                }
-            }
-        }
+    void InitConstraint() {
         for (int i = 0; i < node_num; i++) {
             force[i] = Vector3.zero;
             velocity[i] = Vector3.zero;
             velocity_pre[i] = Vector3.zero;
         }
-        ExternalForceStep();
-        ComputeForce();
         acceleration_pre = acceleration;
     }
 
-    // add the external forces
-    void ExternalForceStep()
-    {
-        for (int i = 0; i < node_num; i++)
-        {
-            force[i] = new Vector3(0, -gravity, frontWindForce);
-            offset[i] = Vector3.zero;
-        }
+    bool hasThisPos(int x, int y) {
+        return y >=0 && y < row;
     }
 
     void ComputeForce()
     {
-        for(int ic = 0; ic < constraint_num;ic++)
-        {
-            // Hooke's law
-            int st = (int) d_springs[ic].x;
-            int ed = (int) d_springs[ic].y;
-            int type = (int) d_springs[ic].z;
-            float length = Vector3.Distance(initial_pos[st], initial_pos[ed]);
-            Vector3 pos_diff = pos[st] - pos[ed];
-            float distance = Vector3.Distance(pos[st], pos[ed]);
-            Vector3 pos_dir = pos_diff/distance;
-            // calculate spring force
-            if (type==0) {f_ab = ksStretch*(distance - length)*pos_dir;}
-            if (type==1) {f_ab = ksShear*(distance - length)*pos_dir;}
-            if (type==2) {f_ab = ksBend*(distance - length)*pos_dir;}
-            //Debug.Log(f_ab);
-            force[st] -= f_ab;
-            force[ed] += f_ab;
+        for (int i=0; i<col; i++) {
+            for (int j=0; j<row; j++) {
+                int index = i+j*col;
+                force[index] = new Vector3(0,0,0);
+                // stretch
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+StretchSpringDir[t,0];
+                    int next_y = j+StretchSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance = Vector3.Distance(pos[next_index],pos[index]);
+                        float springLen = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        // calculate spring force
+                        force[index] += ksStretch*(distance-springLen)*pos_dir;
+                    }
+                }
+                // shear
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+ShearSpringDir[t,0];
+                    int next_y = j+ShearSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance = Vector3.Distance(pos[next_index],pos[index]);
+                        float springLen = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        // calculate spring force
+                        force[index] += ksShear*(distance-springLen)*pos_dir;
+                    }
+                }
+                // bend
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+BendSpringDir[t,0];
+                    int next_y = j+BendSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance =  Vector3.Distance(pos[next_index],pos[index]);
+                        float springLen = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        // calculate spring force
+                        force[index] += ksBend*(distance-springLen)*pos_dir;
+                    }
+                }
+
+                //gravity
+                force[index] += new Vector3(0,-gravity,0) * node_mass;
+                //wind
+                Vector3 norm = new Vector3(0,0,0);
+                for (uint m = 0; m < 4; m++) {
+                    uint n = (m + 1) % 4;
+                    int x1 = i+NormDir[m,0];
+                    int y1 = j+NormDir[m,1];
+                    int x2 = i+NormDir[n,0];
+                    int y2 = j+NormDir[n,1];
+                    if (hasThisPos(x1,y1) && hasThisPos(x2,y2)) {
+                        if (x1<0) {x1 += col;}
+                        if (x1>=col) {x1 -= col;}
+                        if (x2<0) {x2 += col;}
+                        if (x2>=col) {x2 -= col;}
+                        Vector3 pos1 = pos[x1 + y1*col];
+                        Vector3 pos2 = pos[x2 + y2*col];
+                        norm += Vector3.Normalize(Vector3.Cross(pos1 - pos[index], pos2 - pos[index]));
+                        break;
+                    }
+                }
+                norm = Vector3.Normalize(norm);
+                force[index] += 2*Vector3.Dot(norm, new Vector3(0,0,frontWindForce)-velocity[index])*norm;
+                //damp
+                force[index] += - Damp * velocity[index];
+            }
         }
     }
-
+    
     float HlsCalculate(float[] x, int row){
         float hls = 0;
         float[] c = new float[(row-1)*(row-1)];
@@ -254,37 +282,122 @@ public class human : MonoBehaviour
             }
         }
 
-        // external spring force
-        for(int ic = 0; ic < constraint_num;ic++)
-        {
-            // Hooke's law
-            int st = (int) d_springs[ic].x;
-            int ed = (int) d_springs[ic].y;
-            int type = (int) d_springs[ic].z;
-            float length = Vector3.Distance(initial_pos[st], initial_pos[ed]);
-            Vector3 pos_diff = pos[st] - pos[ed];
-            float distance = Vector3.Distance(pos[st], pos[ed]);
-            Vector3 pos_dir = pos_diff/distance;
-            // calculate spring force
-            float ks=1;
-            if (type==0) {ks = ksStretch;}
-            if (type==1) {ks = ksShear;}
-            if (type==2) {ks = ksBend;}
-            f_ab = ks*(distance - length)*pos_dir;
-            //Debug.Log(f_ab);
-            force[st] -= f_ab;
-            force[ed] += f_ab;
-
-            // for implict Jacobian
-            float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                         pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                         pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-            for (int t=0; t<9; t++) {
-                float hes = ks*(I[t] - (length/distance)*(I[t]-mat[t]));
-                df[st,st,t] -= hes;
-                df[ed,ed,t] -= hes;
-                df[ed,st,t] += hes;
-                df[st,ed,t] += hes;
+        // internal spring force
+        for (int i=0; i<col; i++) {
+            for (int j=0; j<row; j++) {
+                // stretch
+                int index = i+j*col;
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+StretchSpringDir[t,0];
+                    int next_y = j+StretchSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance = Vector3.Distance(pos[next_index],pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        float ks=ksStretch;
+                        float length = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        // calculate spring force
+                        force[index] += ks*(distance-length)*pos_dir;
+                        // for implict Jacobian
+                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
+                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
+                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
+                        for (int n=0; n<9; n++) {
+                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
+                            df[index,index,n] -= hes;
+                            df[next_index,next_index,n] -= hes;
+                            df[next_index,index,n] += hes;
+                            df[index,next_index,n] += hes;
+                        }
+                    }
+                }
+                // shear
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+ShearSpringDir[t,0];
+                    int next_y = j+ShearSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance = Vector3.Distance(pos[next_index],pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        float ks=ksShear;
+                        float length = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        // calculate spring force
+                        force[index] += ks*(distance-length)*pos_dir;
+                        // for implict Jacobian
+                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
+                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
+                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
+                        for (int n=0; n<9; n++) {
+                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
+                            df[index,index,n] -= hes;
+                            df[next_index,next_index,n] -= hes;
+                            df[next_index,index,n] += hes;
+                            df[index,next_index,n] += hes;
+                        }
+                    }
+                }
+                // bend
+                for (int t = 0; t < 4; t++) {
+                    int next_x = i+BendSpringDir[t,0];
+                    int next_y = j+BendSpringDir[t,1];
+                    if (hasThisPos(next_x, next_y)) {
+                        if (next_x<0) {next_x += col;}
+                        if (next_x>=col) {next_x -= col;}
+                        int next_index = next_x + next_y*col;
+                        // Hooke's law
+                        Vector3 pos_diff = pos[next_index]-pos[index];
+                        float distance =  Vector3.Distance(pos[next_index],pos[index]);
+                        Vector3 pos_dir = pos_diff/distance;
+                        float ks=ksBend;
+                        float length = Vector3.Distance(initial_pos[next_index],initial_pos[index]);
+                        // calculate spring force
+                        force[index] += ks*(distance-length)*pos_dir;
+                        // for implict Jacobian
+                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
+                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
+                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
+                        for (int n=0; n<9; n++) {
+                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
+                            df[index,index,n] -= hes;
+                            df[next_index,next_index,n] -= hes;
+                            df[next_index,index,n] += hes;
+                            df[index,next_index,n] += hes;
+                        }
+                    }
+                }
+                //gravity
+                force[index] += new Vector3(0,-gravity,0) * node_mass;
+                //wind
+                Vector3 norm = new Vector3(0,0,0);
+                for (uint m = 0; m < 4; m++) {
+                    uint n = (m + 1) % 4;
+                    int x1 = i+NormDir[m,0];
+                    int y1 = j+NormDir[m,1];
+                    int x2 = i+NormDir[n,0];
+                    int y2 = j+NormDir[n,1];
+                    if (hasThisPos(x1,y1) && hasThisPos(x2,y2)) {
+                        if (x1<0) {x1 += col;}
+                        if (x1>=col) {x1 -= col;}
+                        if (x2<0) {x2 += col;}
+                        if (x2>=col) {x2 -= col;}
+                        Vector3 pos1 = pos[x1 + y1*col];
+                        Vector3 pos2 = pos[x2 + y2*col];
+                        norm += Vector3.Normalize(Vector3.Cross(pos1 - pos[index], pos2 - pos[index]));
+                        break;
+                    }
+                }
+                norm = Vector3.Normalize(norm);
+                force[index] += 2*Vector3.Dot(norm, new Vector3(0,0,frontWindForce)-velocity[index])*norm;
+                //damp
+                force[index] += - Damp * velocity[index];
             }
         }
         
@@ -300,12 +413,11 @@ public class human : MonoBehaviour
 
         // b
         for (int i=0; i<node_num; i++) {
-            force[i] -= Damp*velocity_pre[i];
             b[i] = velocity_pre[i] + (dt/node_mass) * force[i];
         }
 
         // jacobian iteration
-        for (int iter=0; iter<5; iter++) {
+        for (int iter=0; iter<20; iter++) {
             for (int i=0; i<node_num; i++) {
                 Vector3 r = b[i];
                 for (int j=0; j<node_num; j++) {
@@ -334,69 +446,50 @@ public class human : MonoBehaviour
 
     void Assemble()
     {
-        for (int step=0; step < loopNum; step++) {
-            ExternalForceStep();
-            if (method==2) {ComputeJacobianForce();}
-            else {ComputeForce();}
+        if (method==2) {ComputeJacobianForce();}
+        else {ComputeForce();}
+
+        for (int i=col; i<node_num; i++) {
+            acceleration[i] = force[i]/node_mass;
+
+            // explict euler method
+            if (method==0) {
+                velocity[i] = velocity_pre[i] + dt*acceleration[i];
+                pos[i] = pos_pre[i] + dt*velocity[i];
+            }
+            // semi-implict Eluer method
+            else if (method==1) {
+                velocity[i] = velocity_pre[i] + dt*acceleration[i];
+                pos[i] = pos_pre[i] + dt*velocity[i];
+            }
+            // implict Eluer method
+            else if (method==2) {
+                pos[i] = pos_pre[i] + dt*velocity[i];
+            }
+            // Verlet Integration
+            else if (method==3) {
+                Vector3 x = dt*acceleration[i];
+                pos[i] = 2.0f*pos_pre[i]-pos_prepre[i] + dt*x; 
+                velocity[i] = velocity_pre[i] + 0.5f*dt*(acceleration[i]+acceleration_pre[i]);
+            }
+
+            // collision with human
+            Vector3 center = new Vector3(ObjHuman.transform.position.x, pos[i].y, ObjHuman.transform.position.z);
+            //Vector3 iniPos = new Vector3(initial_pos[i].x, pos[i].y, initial_pos[i].z);
+            float radius = ((ObjHuman.transform.position.y+10.5f-pos[i].y)/4)+dress_size1;
+            float s_distance = Vector3.Distance(pos[i], center);
+            if (s_distance < radius) {
+                Vector3 s_pos_dir = Vector3.Normalize(pos[i] - center);
+                pos[i] = pos[i] - (s_distance-radius)*s_pos_dir;
+                velocity[i] = velocity[i] - Vector3.Dot(velocity[i],s_pos_dir)*s_pos_dir;
+            }
             
-            for (int i=0; i<node_num; i++) {
-                // add damp 
-                if (method<2) {
-                    force[i] -= Damp*velocity_pre[i];
-                    acceleration[i] = force[i]/node_mass;
-                }
-
-                // explict euler method
-                if (method==0) {
-                    velocity[i] = velocity_pre[i] + dt*acceleration[i];
-                    pos[i] = pos_pre[i] + dt*velocity_pre[i];
-                }
-                // semi-implict Eluer method
-                else if (method==1) {
-                    velocity[i] = velocity_pre[i] + dt*acceleration[i];
-                    pos[i] = pos_pre[i] + dt*velocity[i];
-                }
-                // implict Eluer method
-                else if (method==2) {
-                    pos[i] = pos_pre[i] + dt*velocity[i];
-                }
-                // Verlet Integration
-                else if (method==3) {
-                    Vector3 x = dt*acceleration[i];
-                    pos[i] = 2.0f*pos_pre[i]-pos_prepre[i] + dt*x; 
-                    velocity[i] = velocity_pre[i] + 0.5f*dt*(acceleration[i]+acceleration_pre[i]);
-                }
-                // Fast method
-                else if (method==4) {
-                    
-                }
-
-                // collision with human
-                Vector3 center = new Vector3(ObjHuman.transform.position.x, pos[i].y, ObjHuman.transform.position.z);
-                float bound = ((ObjHuman.transform.position.y+2.2f-pos[i].y)/4)+dress_size1;
-                if (Vector3.Distance(pos[i], center) < bound) {
-                    Vector3 s_pos_dir = (pos[i] - center)/Vector3.Distance(pos[i], center);
-                    pos[i] = center + bound*s_pos_dir;
-                }
-                // constrain 
-                else if (Vector3.Distance(pos[i], pos_pre[i]) > 0.2f) {
-                    Vector3 s_pos_dir = (pos[i] - pos_pre[i])/Vector3.Distance(pos[i], pos_pre[i]);
-                    pos[i] = pos_pre[i] + 0.2f*s_pos_dir;
-                    print("constrain happen");
-                }
-
-                if (i<col) {pos[i]=initial_pos[i];}
-
-                // save the pre
-                pos_prepre[i] = pos_pre[i];
-                pos_pre[i] = pos[i];
-                velocity_pre[i] = velocity[i];
-                acceleration_pre[i] = acceleration[i];
-            } 
-
-            // fixed node
-            
-        }
+            // save the pre
+            pos_prepre[i] = pos_pre[i];
+            pos_pre[i] = pos[i];
+            velocity_pre[i] = velocity[i];
+            acceleration_pre[i] = acceleration[i];
+        } 
     }
 
     void UpdateMesh()
@@ -405,40 +498,21 @@ public class human : MonoBehaviour
         mesh.RecalculateNormals();
     }
 
-    //set up the frame number each second default=60
-    void Awake()
-    {
-        Application.targetFrameRate = frameNum;
+    public IEnumerator StartAsync(){
+        float t = 0;
+        while(true){
+            t += Time.deltaTime;
+            while(t > dt){
+                Assemble();
+                UpdateMesh();
+                t -= dt;
+            }
+            yield return null;
+        }
     }
 
     private void Update()
     {
-        if (Input.GetKeyDown("a") || Input.GetKeyDown("d")) {
-            if (Input.GetKeyDown("a")) {
-                ObjHuman.transform.position = new Vector3(ObjHuman.transform.position.x-0.1f, ObjHuman.transform.position.y, ObjHuman.transform.position.z);
-            }
-            if (Input.GetKeyDown("d")) {
-                ObjHuman.transform.position = new Vector3(ObjHuman.transform.position.x+0.1f, ObjHuman.transform.position.y, ObjHuman.transform.position.z);
-            }
-            for (int j = 0; j < row; j++)
-            {
-                for (int i = 0; i < col; i++)
-                {
-                    int idx = j * col + i;
-                    float theta = i*2*Mathf.PI/col;
-                    initial_pos[idx] = ObjHuman.transform.position + new Vector3((0.5f*j+dress_size1)*Mathf.Cos(theta), 2.2f-j, (0.5f*j+dress_size2)*Mathf.Sin(theta));
-                    Vector3 center =  new Vector3(ObjHuman.transform.position.x, pos[idx].y, ObjHuman.transform.position.z);
-                    float bound = ((ObjHuman.transform.position.y+2.2f-pos[idx].y)/4)+dress_size1;
-                    if (Vector3.Distance(pos[idx], center) < bound) {
-                        Vector3 s_pos_dir = (pos[idx] - center)/Vector3.Distance(pos[i], center);
-                        pos[idx] = center + bound*s_pos_dir;
-                    }
 
-                    if (idx<col) {pos[idx]=initial_pos[idx];}
-                }
-            }
-        }
-        Assemble();
-        UpdateMesh();
     }
 }
