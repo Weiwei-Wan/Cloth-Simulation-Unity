@@ -3,67 +3,89 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class ExplictGPU : MonoBehaviour
+public class ImplictGPU : MonoBehaviour
 {
     float deltaTime = 0.002f;
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
-    private int nodeNum = 32;
+    private int nodeNum = 16;
     private bool _initialized = false;
 
     [SerializeField]
     public GameObject sphere;
-    public ComputeShader ExCompute;
+    public ComputeShader ImCompute;
     public Shader ClothShader;
     private Material material;
 
     private float ksStretch = 10000;
     private float ksShear = 10000;
-    private float ksBend= 10000;
+    private float ksBend = 10000;
     private float wind = -5;
 
     private ComputeBuffer _positionBuffer;
     private ComputeBuffer _normalBuffer;
     private ComputeBuffer _velocitiesBuffer;
+    private ComputeBuffer _forceBuffer;
+    private ComputeBuffer _ABuffer;
+    private ComputeBuffer _dfBuffer;
+    private ComputeBuffer _bBuffer;
+    private ComputeBuffer _velocityPreBuffer;
 
     private int _kernelInit;
+    private int _kernelStepForce;
+    private int _kernelStepJacobian;
     private int _kernelStepVelocity;
     private int _kernelStepPosition;
     private int _groupX;
     private int _groupY;
     
     public void UpdateParameters() {
-        ExCompute.SetFloat("ksStretch", ksStretch);
-        ExCompute.SetFloat("ksShear", ksShear);
-        ExCompute.SetFloat("ksBend", ksBend);
-        ExCompute.SetFloat("wind", wind);
+        ImCompute.SetFloat("ksStretch", ksStretch);
+        ImCompute.SetFloat("ksShear", ksShear);
+        ImCompute.SetFloat("ksBend", ksBend);
+        ImCompute.SetFloat("wind", wind);
     }
  
     public AsyncGPUReadbackRequest Initialize() {
-        _kernelInit = ExCompute.FindKernel("Init");
-        _kernelStepVelocity = ExCompute.FindKernel("UpdateV");
-        _kernelStepPosition = ExCompute.FindKernel("UpdateP");
-        ExCompute.SetInts("nodeNum", nodeNum, nodeNum);
+        _kernelInit = ImCompute.FindKernel("Init");
+        _kernelStepForce = ImCompute.FindKernel("UpdateF");
+        _kernelStepJacobian = ImCompute.FindKernel("UpdateJ");
+        _kernelStepVelocity = ImCompute.FindKernel("UpdateV");
+        _kernelStepPosition = ImCompute.FindKernel("UpdateP");
+
+        ImCompute.SetInts("nodeNum", nodeNum, nodeNum);
         UpdateParameters();
 
         _positionBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _velocitiesBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _normalBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _forceBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _ABuffer = new ComputeBuffer(9*nodeNum*nodeNum*nodeNum*nodeNum,16);
+        _dfBuffer  = new ComputeBuffer(9*nodeNum*nodeNum*nodeNum*nodeNum,16);
+        _bBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _velocityPreBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
 
         System.Action<int> setBufferForKernet = (k)=>{
-            ExCompute.SetBuffer(k,"vel",_velocitiesBuffer);
-            ExCompute.SetBuffer(k,"pos",_positionBuffer);
-            ExCompute.SetBuffer(k,"norm",_normalBuffer);
+            ImCompute.SetBuffer(k,"vel",_velocitiesBuffer);
+            ImCompute.SetBuffer(k,"pos",_positionBuffer);
+            ImCompute.SetBuffer(k,"norm",_normalBuffer);
+            ImCompute.SetBuffer(k,"force",_forceBuffer);
+            ImCompute.SetBuffer(k,"A",_ABuffer);
+            ImCompute.SetBuffer(k,"df",_dfBuffer);
+            ImCompute.SetBuffer(k,"b",_bBuffer);
+            ImCompute.SetBuffer(k,"velocity_pre",_velocityPreBuffer);
         };
 
         setBufferForKernet(_kernelInit);
+        setBufferForKernet(_kernelStepForce);
+        setBufferForKernet(_kernelStepJacobian);
         setBufferForKernet(_kernelStepVelocity);
         setBufferForKernet(_kernelStepPosition);
 
-        ExCompute.Dispatch(_kernelInit,_groupX,_groupY,1);
+        ImCompute.Dispatch(_kernelInit,_groupX,_groupY,1);
 
         CreateIndexBuffer();
-        material.SetBuffer(ShaderIDs.pos, _positionBuffer );
+        material.SetBuffer(ShaderIDs.pos, _positionBuffer);
         material.SetBuffer(ShaderIDs.norm,_normalBuffer);
 
         return AsyncGPUReadback.Request(_positionBuffer,(req)=>{
@@ -88,7 +110,7 @@ public class ExplictGPU : MonoBehaviour
         int[] indicies = new int[_indexBuffer.count];
         for(var x = 0; x < nodeNum - 1; x++){
             for(var y = 0; y < nodeNum - 1; y++){
-                var vertexIndex = (y * nodeNum + x);
+                var vertexIndex = y * nodeNum + x;
                 var quadIndex = y * (nodeNum - 1) + x;
                 var upVertexIndex = vertexIndex + nodeNum;
                 var offset = quadIndex * 6;
@@ -106,12 +128,16 @@ public class ExplictGPU : MonoBehaviour
     public IEnumerator StartAsync(){
         yield return Initialize();
         float dt = 0;
-        while(true){
+        while (true) {
             dt += Time.deltaTime;
-            while(dt > deltaTime){
-                ExCompute.SetFloat("dt", deltaTime);
-                ExCompute.Dispatch(_kernelStepVelocity,_groupX,_groupY,1);
-                ExCompute.Dispatch(_kernelStepPosition,_groupX,_groupY,1);
+            while(dt > deltaTime) {
+                ImCompute.SetFloat("dt", deltaTime);
+                ImCompute.Dispatch(_kernelStepForce,_groupX,_groupY,1);
+                for (int iter=0; iter<10; iter++) {
+                    ImCompute.Dispatch(_kernelStepJacobian,_groupX,_groupY,1);
+                    ImCompute.Dispatch(_kernelStepVelocity,_groupX,_groupY,1);
+                }
+                ImCompute.Dispatch(_kernelStepPosition,_groupX,_groupY,1);
                 dt -= deltaTime;
             }
             yield return null;
@@ -123,7 +149,6 @@ public class ExplictGPU : MonoBehaviour
         _groupX = nodeNum / THREAD_X;
         _groupY = nodeNum / THREAD_Y;
         material = new Material(ClothShader);
-
         UpdateParameters();
         UpdateSpherePos();
         StartCoroutine(StartAsync());
@@ -136,7 +161,7 @@ public class ExplictGPU : MonoBehaviour
 
     // collision with sphere
     void UpdateSpherePos() {
-        ExCompute.SetVector("sphere", sphere.transform.position);
+        ImCompute.SetVector("sphere", sphere.transform.position);
     }
 
     void Update() {
@@ -160,6 +185,26 @@ public class ExplictGPU : MonoBehaviour
         if(_velocitiesBuffer != null){
             _velocitiesBuffer.Release();
             _velocitiesBuffer = null;
+        }
+        if(_forceBuffer != null){
+            _forceBuffer.Release();
+            _forceBuffer = null;
+        }
+        if(_ABuffer != null){
+            _ABuffer.Release();
+            _ABuffer = null;
+        }
+        if(_dfBuffer != null){
+            _dfBuffer.Release();
+            _dfBuffer = null;
+        }
+        if(_bBuffer != null){
+            _bBuffer.Release();
+            _bBuffer = null;
+        }
+        if(_velocityPreBuffer != null){
+            _velocityPreBuffer.Release();
+            _velocityPreBuffer = null;
         }
         if(_indexBuffer != null){
             _indexBuffer.Release();

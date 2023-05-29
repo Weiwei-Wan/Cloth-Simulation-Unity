@@ -25,7 +25,7 @@ public class Wind : MonoBehaviour
     float ksShear = 10000;
     float ksBend = 10000;
 
-    const int node_row_num = 32;
+    const int node_row_num = 16;
     const int node_num = node_row_num * node_row_num;
     const int element_row_num = node_row_num - 1;
     const int element_num = element_row_num * element_row_num * 2;
@@ -181,6 +181,7 @@ public class Wind : MonoBehaviour
                         break;
                     }
                 }
+
                 norm = Vector3.Normalize(norm);
                 force[index] += 2*Vector3.Dot(norm, new Vector3(0,0,frontWindForce)-velocity[index])*norm;
                 //damp
@@ -378,7 +379,7 @@ public class Wind : MonoBehaviour
         }
 
         // jacobian iteration
-        for (int iter=0; iter<20; iter++) {
+        for (int iter=0; iter<10; iter++) {
             for (int i=0; i<node_num; i++) {
                 Vector3 r = b[i];
                 for (int j=0; j<node_num; j++) {
