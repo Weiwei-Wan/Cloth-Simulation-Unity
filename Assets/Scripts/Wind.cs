@@ -4,6 +4,18 @@ using UnityEngine;
 
 public class Wind : MonoBehaviour
 {
+    float gravity = 9.8f;
+    float frontWindForce = 5;
+    float Damp = 1;
+    float ksStretch = 10000;
+    float ksShear = 10000;
+    float ksBend = 10000;
+    float springIniLen = 0.1f;
+    float node_mass = 1;
+    float dt = 0.02f;
+    const int node_row_num = 16;
+
+
     Mesh mesh;
     MeshFilter meshFilter;
     private GameObject sphere;
@@ -17,31 +29,19 @@ public class Wind : MonoBehaviour
     bool downLeftFixed = false;
     bool downRightFixed = false;
 
-    float gravity = 9.8f;
-    float frontWindForce = 5;
-    float Damp = 1;
-
-    float ksStretch = 10000;
-    float ksShear = 10000;
-    float ksBend = 10000;
-
-    const int node_row_num = 16;
     const int node_num = node_row_num * node_row_num;
     const int element_row_num = node_row_num - 1;
     const int element_num = element_row_num * element_row_num * 2;
     int[] element_idx = new int[element_num * 3];
 
-    float springIniLen = 0.1f;
     float stretchSpringLen;
     float shearSpringLen;
     float bendSpringLen;
-    float node_mass = 1;
-    float dt = 0.002f;
 
     // 3 forces in string-nodes system
-    int[,] StretchSpringDir = {{1,0},{0,1},{-1,0},{0,-1}};
-    int[,] ShearSpringDir = {{2,0},{0,2},{-2,0},{0,-2}};
-    int[,] BendSpringDir = {{1,1},{-1,1},{-1,-1},{1,-1}};
+    int[,] StretchSpringDir = {{1,0},{0,1}};
+    int[,] ShearSpringDir = {{2,0},{0,2}};
+    int[,] BendSpringDir = {{1,1},{-1,1}};
     int[,] NormDir = {{1,0},{0,1},{-1,0},{0,-1},};
     
     Vector3[] pos = new Vector3[node_num];
@@ -58,7 +58,12 @@ public class Wind : MonoBehaviour
     float[] I = {1,0,0,0,1,0,0,0,1};
     float[,,] A = new float[node_num, node_num, 9];
     float[,,] df = new float[node_num, node_num, 9];
-    Vector3[] b = new Vector3[node_num];
+    Vector3[] res = new Vector3[node_num];
+    Vector3[] rhs = new Vector3[node_num];
+    Vector3[] inertia = new Vector3[node_num];
+    Vector3[] d = new Vector3[node_num];
+    Vector3[] res2 = new Vector3[node_num];
+    Vector3[] Ad = new Vector3[node_num];
 
     void Awake()
     {
@@ -74,6 +79,7 @@ public class Wind : MonoBehaviour
 
     void drawTriangle()
     {
+        float dx_space = 10.0f / (node_row_num - 1);
         for (int j = 0; j < node_row_num; j++)
         {
             for (int i = 0; i < node_row_num; i++)
@@ -119,55 +125,44 @@ public class Wind : MonoBehaviour
         return x >= 0 && x < node_row_num && y >=0 && y < node_row_num;
     }
 
-    void ComputeForce()
-    {
+    void ComputeForce() {
         for (int i=0; i<node_row_num; i++) {
             for (int j=0; j<node_row_num; j++) {
                 int index = i+j*node_row_num;
-                force[index] = new Vector3(0,0,0);
-                // stretch
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+StretchSpringDir[t,0];
-                    int next_y = j+StretchSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance = Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
-                        // calculate spring force
-                        force[index] += ksStretch*(distance-stretchSpringLen)*pos_dir;
+                for (int type = 0; type < 3; type++) {
+                    for (int t = 0; t < 2; t++) {
+                        // stretch
+                        int next_x = i+StretchSpringDir[t,0];
+                        int next_y = j+StretchSpringDir[t,1];
+                        float ks=ksStretch;
+                        float length = stretchSpringLen;
+                        // shear
+                        if (type == 1) {
+                            next_x = i+ShearSpringDir[t,0];
+                            next_y = j+ShearSpringDir[t,1];
+                            ks=ksShear;
+                            length = shearSpringLen;
+                        }
+                        // bend
+                        else if (type == 2) {
+                            next_x = i+BendSpringDir[t,0];
+                            next_y = j+BendSpringDir[t,1];
+                            ks=ksBend;
+                            length = bendSpringLen;
+                        }
+                        if (hasThisPos(next_x, next_y)) {
+                            int next_index = next_x + next_y*node_row_num;
+                            // Hooke's law
+                            Vector3 pos_diff = pos[index]-pos[next_index];
+                            float distance = Vector3.Distance(pos[next_index],pos[index]);
+                            Vector3 pos_dir = pos_diff/distance;
+                            // calculate spring force
+                            force[index] -= ks*(distance-length)*pos_dir;
+                            force[next_index] += ks*(distance-length)*pos_dir;
+                        }
                     }
                 }
-                // shear
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+ShearSpringDir[t,0];
-                    int next_y = j+ShearSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance = Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
-                        // calculate spring force
-                        force[index] += ksShear*(distance-shearSpringLen)*pos_dir;
-                    }
-                }
-                // bend
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+BendSpringDir[t,0];
-                    int next_y = j+BendSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance =  Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
-                        // calculate spring force
-                        force[index] += ksBend*(distance-bendSpringLen)*pos_dir;
-                    }
-                }
-
+               
                 //gravity
                 force[index] += new Vector3(0,-gravity,0) * node_mass;
                 //wind
@@ -188,62 +183,6 @@ public class Wind : MonoBehaviour
                 force[index] += - Damp * velocity[index];
             }
         }
-    }
-    
-    float HlsCalculate(float[] x, int row){
-        float hls = 0;
-        float[] c = new float[(row-1)*(row-1)];
-        if(row == 1){
-            return x[0];
-        }
-        if(row == 2){
-            float kk = x[0]*x[3] - x[1]*x[2];
-            return kk;
-        }
-        int i, j, k;
-        for(j = 0;j < row ;j++){
-            for(i = 0 ; i < row - 1;i++){
-                for(k = 0 ; k < row - 1;k++){
-                    if(k<j) c[i*(row-1)+k] = x[(i+1)*row+k];
-                    if(k>=j) c[i*(row-1)+k] = x[(i+1)*row+k+1];
-                }
-            }
-            hls += Mathf.Pow(-1,j)*x[j]*HlsCalculate(c,row-1);
-        }
-        return hls;
-    }
-
-    float[] adjoint_Matrix(float[] a, int row) {
-        int n=0, m=0, nn = 0, mm = 0;
-        int i, j;
-        float[] company = new float[row*row];
-        for( i = 0; i < row ;i++) {
-            for(j = 0 ; j < row ; j++) {
-                float[] tempArr = new float[(row-1)*(row-1)];
-                n = 0;
-                m = 0;
-                for(int p = 0; p < row ;p++) {
-                    for(int q = 0 ;q < row ;q++){
-                        if(!(p == i || q ==j)) {
-                            tempArr[n*(row-1)+m] = a[p*row+q];
-                            m++;
-                            if(m == row - 1) {
-                                m = 0;
-                                n++;
-                            }
-                        }
-                    }
-                }	
-                float k =  HlsCalculate(tempArr,row-1);
-                company[nn*row+mm] = Mathf.Pow(-1,i+j) * HlsCalculate(tempArr,row-1);
-                nn++;
-                if (nn == row ) {
-                    nn = 0;
-                    mm++;
-                }
-            }
-        }
-        return company;
     }
 
     void ComputeJacobianForce()
@@ -261,88 +200,57 @@ public class Wind : MonoBehaviour
         // internal spring force
         for (int i=0; i<node_row_num; i++) {
             for (int j=0; j<node_row_num; j++) {
-                // stretch
                 int index = i+j*node_row_num;
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+StretchSpringDir[t,0];
-                    int next_y = j+StretchSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance = Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
+                for (int type = 0; type < 3; type++) {
+                    for (int t = 0; t < 2; t++) {
+                        // stretch
+                        int next_x = i+StretchSpringDir[t,0];
+                        int next_y = j+StretchSpringDir[t,1];
                         float ks=ksStretch;
                         float length = stretchSpringLen;
-                        // calculate spring force
-                        force[index] += ks*(distance-length)*pos_dir;
-                        // for implict Jacobian
-                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-                        for (int n=0; n<9; n++) {
-                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
-                            df[index,index,n] -= hes;
-                            df[next_index,next_index,n] -= hes;
-                            df[next_index,index,n] += hes;
-                            df[index,next_index,n] += hes;
+                        // shear
+                        if (type == 1) {
+                            next_x = i+ShearSpringDir[t,0];
+                            next_y = j+ShearSpringDir[t,1];
+                            ks=ksShear;
+                            length = shearSpringLen;
+                        }
+                        // bend
+                        else if (type == 2) {
+                            next_x = i+BendSpringDir[t,0];
+                            next_y = j+BendSpringDir[t,1];
+                            ks=ksBend;
+                            length = bendSpringLen;
+                        }
+                        if (hasThisPos(next_x, next_y)) {
+                            int next_index = next_x + next_y*node_row_num;
+                            // Hooke's law
+                            Vector3 pos_diff = pos[index]-pos[next_index];
+                            float distance = Vector3.Distance(pos[next_index],pos[index]);
+                            Vector3 pos_dir = pos_diff/distance;
+                            // calculate spring force
+                            force[index] -= ks*(distance-length)*pos_dir;
+                            force[next_index] += ks*(distance-length)*pos_dir;
+                            // for implict Jacobian
+                            float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
+                                           pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
+                                           pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
+                            for (int n=0; n<9; n++) {
+                                float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
+                                df[index,index,n] -= hes;
+                                df[next_index,next_index,n] -= hes;
+                                df[next_index,index,n] += hes;
+                                df[index,next_index,n] += hes;
+                                // jacobian matrix
+                                A[index,index,n] = I[n]-dt*dt*df[index,index,n]; 
+                                A[next_index,next_index,n] = I[n]-dt*dt*df[next_index,next_index,n]; 
+                                A[index,next_index,n] = -dt*dt*df[index,next_index,n];
+                                A[next_index,index,n] = -dt*dt*df[next_index,index,n];
+                            }
                         }
                     }
                 }
-                // shear
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+ShearSpringDir[t,0];
-                    int next_y = j+ShearSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance = Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
-                        float ks=ksShear;
-                        float length = shearSpringLen;
-                        // calculate spring force
-                        force[index] += ks*(distance-length)*pos_dir;
-                        // for implict Jacobian
-                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-                        for (int n=0; n<9; n++) {
-                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
-                            df[index,index,n] -= hes;
-                            df[next_index,next_index,n] -= hes;
-                            df[next_index,index,n] += hes;
-                            df[index,next_index,n] += hes;
-                        }
-                    }
-                }
-                // bend
-                for (int t = 0; t < 4; t++) {
-                    int next_x = i+BendSpringDir[t,0];
-                    int next_y = j+BendSpringDir[t,1];
-                    if (hasThisPos(next_x, next_y)) {
-                        int next_index = next_x + next_y*node_row_num;
-                        // Hooke's law
-                        Vector3 pos_diff = pos[next_index]-pos[index];
-                        float distance =  Vector3.Distance(pos[next_index],pos[index]);
-                        Vector3 pos_dir = pos_diff/distance;
-                        float ks=ksBend;
-                        float length = bendSpringLen;
-                        // calculate spring force
-                        force[index] += ks*(distance-length)*pos_dir;
-                        // for implict Jacobian
-                        float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                                    pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                                    pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-                        for (int n=0; n<9; n++) {
-                            float hes = ks*(I[n] - (length/distance)*(I[n]-mat[n]));
-                            df[index,index,n] -= hes;
-                            df[next_index,next_index,n] -= hes;
-                            df[next_index,index,n] += hes;
-                            df[index,next_index,n] += hes;
-                        }
-                    }
-                }
+
                 //gravity
                 force[index] += new Vector3(0,-gravity,0) * node_mass;
                 //wind
@@ -362,47 +270,76 @@ public class Wind : MonoBehaviour
                 force[index] += - Damp * velocity[index];
             }
         }
+        if (upLeftFixed) {force[0]=Vector3.zero;}
+        if (upRightFixed) {force[node_row_num-1]=Vector3.zero;}
+        if (downLeftFixed) {force[node_row_num*(node_row_num-1)]=Vector3.zero;}
+        if (downRightFixed) {force[node_row_num*node_row_num-1]=Vector3.zero;}
+        Debug.Log("   pos   "+ pos[10]);
+
+        for (int i = 0; i < node_num; i++) {
+            inertia[i] = node_mass * (2 * pos[i] - pos_pre[i]);
+            res[i] = Vector3.zero;
+            for (int j = 0; j < node_num; j++) {
+                res[i].x += df[i,j,0] * pos[j].x + df[i,j,1] * pos[j].y + df[i,j,2] * pos[j].z;
+                res[i].y += df[i,j,3] * pos[j].x + df[i,j,4] * pos[j].y + df[i,j,5] * pos[j].z;
+                res[i].z += df[i,j,6] * pos[j].x + df[i,j,7] * pos[j].y + df[i,j,8] * pos[j].z;       
+            }
+            rhs[i] = inertia[i] + dt*dt*force[i] - dt*dt*res[i];
+        }
+
+        for (int i = 0; i < node_num; i++) {
+            d[i] = Vector3.zero;
+            res2[i] = Vector3.zero;
+            Ad[i] = Vector3.zero;
+            Vector3 x = Vector3.zero;
+            for (int j = 0; j < node_num; j++) {
+                x.x += A[i,j,0] * pos[j].x + A[i,j,1] * pos[j].y + A[i,j,2] * pos[j].z;
+                x.y += A[i,j,3] * pos[j].x + A[i,j,4] * pos[j].y + A[i,j,5] * pos[j].z;
+                x.z += A[i,j,6] * pos[j].x + A[i,j,7] * pos[j].y + A[i,j,8] * pos[j].z; 
+            }
+            res2[i] = rhs[i] - x;
+        }
+        int it = 0, it_max = 200;
+        float rho = 0, rho_old=1, alpha, beta;
         
-        // jacobian matrix
-        for (int i=0; i<node_num; i++) {
+        while (it < it_max) {
+            it += 1;
+            rho = 0;
+            alpha = 0;
+            beta = 0;
             for (int j=0; j<node_num; j++) {
-                for (int t=0; t<9; t++) {
-                    if (i != j) {A[i,j,t] = -dt*dt*df[i,j,t];}
-                    else {A[i,j,t] = I[t]-dt*dt*df[i,j,t];} 
+                rho += res2[j].x * res2[j].x + res2[j].y * res2[j].y + res2[j].z * res2[j].z;
+            }
+            if (rho < 1e-8) { break;}
+            
+            beta = rho / rho_old;
+            for (int i = 0; i<node_num; i++) {
+                d[i] = res2[i] + beta*d[i];
+            }
+
+            for (int i = 0; i < node_num; i++) {
+                Ad[i] = Vector3.zero;
+                for (int j = 0; j < node_num; j++) {
+                    Ad[i].x += A[i,j,0] * d[j].x + A[i,j,1] * d[j].y + A[i,j,2] * d[j].z;
+                    Ad[i].y += A[i,j,3] * d[j].x + A[i,j,4] * d[j].y + A[i,j,5] * d[j].z;
+                    Ad[i].z += A[i,j,6] * d[j].x + A[i,j,7] * d[j].y + A[i,j,8] * d[j].z; 
                 }
             }
-        }
 
-        // b
-        for (int i=0; i<node_num; i++) {
-            b[i] = velocity_pre[i] + (dt/node_mass) * force[i];
-        }
-
-        // jacobian iteration
-        for (int iter=0; iter<10; iter++) {
-            for (int i=0; i<node_num; i++) {
-                Vector3 r = b[i];
-                for (int j=0; j<node_num; j++) {
-                    if (i != j) {
-                        float x = A[i,j,0]*velocity_pre[j].x + A[i,j,1]*velocity_pre[j].y + A[i,j,2]*velocity_pre[j].z;
-                        float y = A[i,j,3]*velocity_pre[j].x + A[i,j,4]*velocity_pre[j].y + A[i,j,5]*velocity_pre[j].z;
-                        float z = A[i,j,6]*velocity_pre[j].x + A[i,j,7]*velocity_pre[j].y + A[i,j,8]*velocity_pre[j].z;
-                        r = new Vector3(r.x-x, r.y-y, r.z-z);
-                    }
-                }
-
-                float[] temp = {A[i,i,0], A[i,i,1], A[i,i,2], A[i,i,3], A[i,i,4], A[i,i,5], A[i,i,6], A[i,i,7], A[i,i,8],};
-                float[] inverse = adjoint_Matrix(temp, 3);
-                float hls = 1.0f/HlsCalculate(temp, 3);
-                float xx = hls * (inverse[0]*r.x + inverse[1]*r.y + inverse[2]*r.z);
-                float yy = hls * (inverse[3]*r.x + inverse[4]*r.y + inverse[5]*r.z);
-                float zz = hls * (inverse[6]*r.x + inverse[7]*r.y + inverse[8]*r.z);
-                velocity[i] = new Vector3(xx, yy, zz);
+            for (int j=0; j<node_num; j++) {
+                alpha += d[j].x * Ad[j].x + d[j].y * Ad[j].y + d[j].z * Ad[j].z;
             }
+            alpha = rho/alpha;
 
             for (int i=0; i<node_num; i++) {
-                velocity_pre[i] = velocity[i];
+                res2[i] = res2[i] - alpha * Ad[i];
+                pos[i] = pos[i] + alpha * d[i];
             }
+            rho_old = rho;
+            if (upLeftFixed) {pos[0]=pos_pre[0];}
+            if (upRightFixed) {pos[node_row_num-1]=pos_pre[node_row_num-1];}
+            if (downLeftFixed) {pos[node_row_num*(node_row_num-1)]=pos_pre[node_row_num*(node_row_num-1)];}
+            if (downRightFixed) {pos[node_row_num*node_row_num-1]=pos_pre[node_row_num*node_row_num-1];}
         }
     }
 
@@ -432,7 +369,8 @@ public class Wind : MonoBehaviour
             }
             // implict Eluer method
             else if (method==2) {
-                pos[i] = pos_pre[i] + dt*velocity[i];
+                // only for wind
+                velocity[i] = (pos[i] - pos_pre[i])/dt;
             }
             // Verlet Integration
             else if (method==3) {
@@ -455,6 +393,7 @@ public class Wind : MonoBehaviour
             pos_pre[i] = pos[i];
             velocity_pre[i] = velocity[i];
             acceleration_pre[i] = acceleration[i];
+            force[i] = Vector3.zero;
         } 
     }
 

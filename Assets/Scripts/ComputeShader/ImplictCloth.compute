@@ -1,18 +1,26 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel Init
 #pragma kernel UpdateF
-#pragma kernel UpdateJ
-#pragma kernel UpdateV
 #pragma kernel UpdateP
+#pragma kernel UpdateRhs
+#pragma kernel UpdateRes2
+#pragma kernel UpdateD
+#pragma kernel UpdateAd
+#pragma kernel UpdateRes2Pos
 
 RWStructuredBuffer<float4> pos; //position
 RWStructuredBuffer<float4> norm; //normal
 RWStructuredBuffer<float3> force; 
-RWStructuredBuffer<float3> A; 
-RWStructuredBuffer<float3> df; 
-RWStructuredBuffer<float3> b; 
 RWStructuredBuffer<float3> vel; //velocity
-RWStructuredBuffer<float3> velocity_pre;
+RWStructuredBuffer<float4> pos_pre; //position
+RWStructuredBuffer<float> A; 
+RWStructuredBuffer<float> df; 
+RWStructuredBuffer<float3> res; 
+RWStructuredBuffer<float3> rhs;
+RWStructuredBuffer<float3> inertia;
+RWStructuredBuffer<float3> d;
+RWStructuredBuffer<float3> res2;
+RWStructuredBuffer<float3> Ad;
 
 uint2 nodeNum;  // row: x  col:y
 float ksStretch;
@@ -25,6 +33,14 @@ float dt;
 #define springIniLen 0.1
 #define mass 1
 #define damp 1
+
+static float rho = 0;
+static float rho_old = 1;
+static float alpha = 0;
+static float beta = 0;
+static bool IsBreak = false;
+static bool sum1 = false;
+static bool sum2 = false;
 
 // collision with sphere
 uniform float3 sphere;
@@ -40,228 +56,150 @@ static bool hasThisPos(uint2 id) {
     return id.x >= 0 && id.x < nodeNum.x && id.y >=0 && id.y < nodeNum.y;
 }
 
-static float HlsCalculate(float x[9], uint row) {
-    float hls = 0;
-    float c[9] = {0,0,0,0,0,0,0,0,0};
-    if (row == 1) {
-        return x[0];
-    }
-    if (row == 2) {
-        float kk = x[0]*x[3] - x[1]*x[2];
-        return kk;
-    }
-    if (row == 3) {
-        int i, j, k;
-        for (j = 0;j < row ;j++) {
-            for (i = 0 ; i < row - 1;i++) {
-                for (k = 0 ; k < row - 1;k++) {
-                    if (k<j) c[i*(row-1)+k] = x[(i+1)*row+k];
-                    if (k>=j) c[i*(row-1)+k] = x[(i+1)*row+k+1];
-                }
-            }
-            hls += pow(-1,j)*x[j]*(c[0]*c[3] - c[1]*c[2]);
-        }
-    }
-    return hls;
-}
-
-static float3 computeForce(uint2 id) {
+static void updateForce(uint2 id) {
     uint index = id.x + id.y * nodeNum.x;
+    float xx = index;
     uint nodeAll = nodeNum.x * nodeNum.y;
     float3 position = pos[index].xyz;
     float3 velocity = vel[index];
     float3 normal = norm[index].xyz;
-    float3 f = float3(0,0,0);
     
-    // stretch
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + StretchSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        float3 next_position = pos[next_index].xyz;
-        if (hasThisPos(next_id)) {
-            // Hooke's law
-            float3 pos_diff = next_position-position;
-            float distance = length(pos_diff);
-            float3 pos_dir = pos_diff/distance;
-            // calculate spring force
-            f += ksStretch*(distance-springIniLen)*pos_dir;
-            // for implict Jacobian
-            float mat[9] = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                        pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                        pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-            for (int n=0; n<9; n++) {
-                float hes = ksStretch*(I[n] - (springIniLen/distance)*(I[n]-mat[n]));
-                df[index*nodeAll*9+index*9+n] -= hes;
-                df[next_index*nodeAll*9+next_index*9+n] -= hes;
-                df[next_index*nodeAll*9+index*9+n] += hes;
-                df[index*nodeAll*9+next_index*9+n] += hes;
-                A[index*nodeAll*9+index*9+n] = I[n]-dt*dt*df[index*nodeAll*9+index*9+n];
-                A[next_index*nodeAll*9+next_index*9+n] = I[n]-dt*dt*df[next_index*nodeAll*9+next_index*9+n];
-                A[index*nodeAll*9+next_index*9+n] = -dt*dt*df[index*nodeAll*9+next_index*9+n];
-                A[next_index*nodeAll*9+index*9+n] = -dt*dt*df[next_index*nodeAll*9+index*9+n];
-
+    for (uint type = 0; type < 3; type++) {
+        for (uint t = 0; t < 4; t++) {
+            // stretch
+            uint2 next_id = id + StretchSpringDir[t];
+            float ks=ksStretch;
+            float len = springIniLen;
+            // shear
+            if (type == 1) {
+                next_id = id + ShearSpringDir[t];
+                ks=ksShear;
+                len = 2*springIniLen;
             }
+            // bend
+            else if (type == 2) {
+                next_id = id + BendSpringDir[t];
+                ks=ksBend;
+                len = 1.414f*springIniLen;
+            }
+            uint next_index = next_id.x + next_id.y * nodeNum.x;
+            float3 next_position = pos[next_index].xyz;
+
+            if (hasThisPos(next_id)) {
+                // Hooke's law
+                float3 pos_diff = position - next_position;
+                float distance = length(pos_diff);
+                float3 pos_dir = pos_diff/distance;
+                // calculate spring force
+                force[index] -= ks*(distance-len)*pos_dir;
+                // for implict Jacobian
+                float mat[9] = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
+                                pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
+                                pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
+                for (uint n=0; n<9; n++) {
+                    float hes = ks*(I[n] - (len/distance)*(I[n]-mat[n]));
+                    df[index*nodeAll*9+index*9+n] = -hes;
+                    df[index*nodeAll*9+next_index*9+n] = hes;
+
+                    //df[next_index*nodeAll*9+next_index*9+n] -= hes;
+                    //df[next_index*nodeAll*9+index*9+n] += hes;
+
+                    A[index*nodeAll*9+index*9+n] = I[n]-dt*dt*df[index*nodeAll*9+index*9+n];
+                    A[index*nodeAll*9+next_index*9+n] = -dt*dt*df[index*nodeAll*9+next_index*9+n];
+
+                    //A[next_index*nodeAll*9+next_index*9+n] = I[n]-dt*dt*df[next_index*nodeAll*9+next_index*9+n];
+                    //A[next_index*nodeAll*9+index*9+n] = -dt*dt*df[next_index*nodeAll*9+index*9+n];
+                }
+            } 
         }
     }
-
-    // shear
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + ShearSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        float3 next_position = pos[next_index].xyz;
-        if (hasThisPos(next_id)) {
-            // Hooke's law
-            float3 pos_diff = next_position-position;
-            float distance = length(pos_diff);
-            float3 pos_dir = pos_diff/distance;
-            // calculate spring force
-            f += ksShear*(distance-1.414f*springIniLen)*pos_dir;
-            // for implict Jacobian
-            float mat[9] = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                        pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                        pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-            for (int n=0; n<9; n++) {
-                float hes = ksShear*(I[n] - (1.414f*springIniLen/distance)*(I[n]-mat[n]));
-                df[index*nodeAll*9+index*9+n] -= hes;
-                df[next_index*nodeAll*9+next_index*9+n] -= hes;
-                df[next_index*nodeAll*9+index*9+n] += hes;
-                df[index*nodeAll*9+next_index*9+n] += hes;
-                A[index*nodeAll*9+index*9+n] = I[n]-dt*dt*df[index*nodeAll*9+index*9+n];
-                A[next_index*nodeAll*9+next_index*9+n] = I[n]-dt*dt*df[next_index*nodeAll*9+next_index*9+n];
-                A[next_index*nodeAll*9+index*9+n] = -dt*dt*df[next_index*nodeAll*9+index*9+n];
-                A[index*nodeAll*9+next_index*9+n] = -dt*dt*df[index*nodeAll*9+next_index*9+n];
-            }
-        }
-    }
-
-    // bend
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + BendSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        float3 next_position = pos[next_index].xyz;
-        if (hasThisPos(next_id)) {
-            // Hooke's law
-            float3 pos_diff = next_position-position;
-            float distance = length(pos_diff);
-            float3 pos_dir = pos_diff/distance;
-            // calculate spring force
-            f += ksBend*(distance-2*springIniLen)*pos_dir;
-            // for implict Jacobian
-            float mat[9] = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
-                        pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
-                        pos_dir.z*pos_dir.x, pos_dir.z*pos_dir.y, pos_dir.z*pos_dir.z, }; 
-            for (int n=0; n<9; n++) {
-                float hes = ksBend*(I[n] - (2*springIniLen/distance)*(I[n]-mat[n]));
-                df[index*nodeAll*9+index*9+n] -= hes;
-                df[next_index*nodeAll*9+next_index*9+n] -= hes;
-                df[next_index*nodeAll*9+index*9+n] += hes;
-                df[index*nodeAll*9+next_index*9+n] += hes;
-                A[index*nodeAll*9+index*9+n] = I[n]-dt*dt*df[index*nodeAll*9+index*9+n];
-                A[next_index*nodeAll*9+next_index*9+n] = I[n]-dt*dt*df[next_index*nodeAll*9+next_index*9+n];
-                A[next_index*nodeAll*9+index*9+n] = -dt*dt*df[next_index*nodeAll*9+index*9+n];
-                A[index*nodeAll*9+next_index*9+n] = -dt*dt*df[index*nodeAll*9+next_index*9+n];
-            }
-        }
-    }
-    
     //gravity
-    f += float3(0,-9.8,0) * mass;
+    force[index] += float3(0,-9.8,0) * mass;
     //wind
-    f += 2*dot(normal, float3(0,0,wind)-velocity)*normal;
+    force[index] += 2*dot(normal, float3(0,0,wind)-velocity)*normal;
     //damp
-    f += - damp * velocity;
-    
-    return f;
+    force[index] += - damp * velocity;
+    // pin two up corner
+    if (id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1)) {
+        force[index] = 0;
+    }
 }
 
-static void updateForce(uint2 id) {
-    uint index = id.x + id.y * nodeNum.x;
-    force[index] = computeForce(id);
-    b[index] = vel[index] + (dt/mass) * force[index];
-}
-
-static void JacobianIteration(uint2 id) {
+static void updateRhs(uint2 id) {
     uint index = id.x + id.y * nodeNum.x;
     uint nodeAll = nodeNum.x * nodeNum.y;
-    float3 r = b[index];
-    // stretch
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + StretchSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        if (hasThisPos(next_id)) {
-            float x = A[index*nodeAll*9+next_index*9+0]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+1]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+2]*velocity_pre[next_index].z;
-            float y = A[index*nodeAll*9+next_index*9+3]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+4]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+5]*velocity_pre[next_index].z;
-            float z = A[index*nodeAll*9+next_index*9+6]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+7]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+8]*velocity_pre[next_index].z;
-            r = float3(r.x-x, r.y-y, r.z-z);
-        }
+    inertia[index] = mass * (2 * pos[index].xyz - pos_pre[index].xyz);
+    res[index] = float3(0,0,0);
+    for (uint j = 0; j < nodeAll; j++) {
+        res[index].x += df[index*nodeAll*9+j*9+0] * pos[j].x + df[index*nodeAll*9+j*9+1] * pos[j].y + df[index*nodeAll*9+j*9+2] * pos[j].z;
+        res[index].y += df[index*nodeAll*9+j*9+3] * pos[j].x + df[index*nodeAll*9+j*9+4] * pos[j].y + df[index*nodeAll*9+j*9+5] * pos[j].z;
+        res[index].z += df[index*nodeAll*9+j*9+6] * pos[j].x + df[index*nodeAll*9+j*9+7] * pos[j].y + df[index*nodeAll*9+j*9+8] * pos[j].z;       
     }
-    // shear
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + ShearSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        if (hasThisPos(next_id)) {
-            float x = A[index*nodeAll*9+next_index*9+0]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+1]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+2]*velocity_pre[next_index].z;
-            float y = A[index*nodeAll*9+next_index*9+3]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+4]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+5]*velocity_pre[next_index].z;
-            float z = A[index*nodeAll*9+next_index*9+6]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+7]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+8]*velocity_pre[next_index].z;
-            r = float3(r.x-x, r.y-y, r.z-z);
-        }
-    }
-    // bend
-    for (uint i = 0; i < 4; i++) {
-        uint2 next_id = id + BendSpringDir[i];
-        uint next_index = next_id.x + next_id.y * nodeNum.x;
-        if (hasThisPos(next_id)) {
-            float x = A[index*nodeAll*9+next_index*9+0]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+1]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+2]*velocity_pre[next_index].z;
-            float y = A[index*nodeAll*9+next_index*9+3]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+4]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+5]*velocity_pre[next_index].z;
-            float z = A[index*nodeAll*9+next_index*9+6]*velocity_pre[next_index].x + A[index*nodeAll*9+next_index*9+7]*velocity_pre[next_index].y + A[index*nodeAll*9+next_index*9+8]*velocity_pre[next_index].z;
-            r = float3(r.x-x, r.y-y, r.z-z);
-        }
-    }
-
-    float temp[9];
-    for(uint i = 0; i < 9 ;i++) {
-        temp[i] = A[index*nodeAll*9+index*9+i];
-    }
-    
-    float inverse[9];
-    uint n=0, m=0, nn=0, mm=0;
-    for(uint i = 0; i < 3 ;i++) {
-        for(uint j = 0 ; j < 3 ; j++) {
-            float tempArr[9] = {0,0,0,0,0,0,0,0,0};
-            n = 0;
-            m = 0;
-            for(uint p = 0; p < 3 ;p++) {
-                for(uint q = 0 ;q < 3 ;q++){
-                    if(!(p == i || q == j)) {
-                        tempArr[n*2+m] = temp[p*3+q];
-                        m++;
-                        if(m == 2) {
-                            m = 0;
-                            n++;
-                        }
-                    }
-                }
-            }	
-            float k = HlsCalculate(tempArr,2);
-            inverse[nn*3+mm] = pow(-1,i+j) * HlsCalculate(tempArr,2);
-            nn++;
-            if (nn == 3 ) {
-                nn = 0;
-                mm++;
-            }
-        }
-    }
-
-    float hls = 1.0f/HlsCalculate(temp, 3);
-    float xx = hls * (inverse[0]*r.x + inverse[1]*r.y + inverse[2]*r.z);
-    float yy = hls * (inverse[3]*r.x + inverse[4]*r.y + inverse[5]*r.z);
-    float zz = hls * (inverse[6]*r.x + inverse[7]*r.y + inverse[8]*r.z);
-    vel[index] = float3(xx, yy, zz);
+    rhs[index] = inertia[index] + dt*dt*force[index] - dt*dt*res[index];
 }
 
-static void updateVelocity(uint2 id) {
+static void updateRes2(uint2 id) {
     uint index = id.x + id.y * nodeNum.x;
-    velocity_pre[index] = vel[index];
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    d[index] = float3(0,0,0);
+    Ad[index] = float3(0,0,0);
+    res2[index] = float3(0,0,0);
+    float3 x = float3(0,0,0);
+    for (uint j = 0; j < nodeAll; j++) {
+        x.x += A[index*nodeAll*9+j*9+0] * pos[j].x + A[index*nodeAll*9+j*9+1] * pos[j].y + A[index*nodeAll*9+j*9+2] * pos[j].z;
+        x.y += A[index*nodeAll*9+j*9+3] * pos[j].x + A[index*nodeAll*9+j*9+4] * pos[j].y + A[index*nodeAll*9+j*9+5] * pos[j].z;
+        x.z += A[index*nodeAll*9+j*9+6] * pos[j].x + A[index*nodeAll*9+j*9+7] * pos[j].y + A[index*nodeAll*9+j*9+8] * pos[j].z; 
+    }
+    res2[index] = rhs[index] - x;
+}
+
+// loop
+static void updateD(uint2 id) {
+    if (IsBreak) {return;}
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    if (!sum1) {
+        rho = 0;
+        for (uint j = 0; j < nodeAll; j++) {
+            rho += res2[j].x * res2[j].x + res2[j].y * res2[j].y + res2[j].z * res2[j].z;
+        }
+        sum1 = true;
+    }
+    if (rho < 1e-8) {IsBreak=true;}
+    d[index] = res2[index] + d[index]*rho/rho_old;
+}
+
+static void updateAd(uint2 id) {
+    if (IsBreak) {return;}
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    if (!sum2) {
+        alpha = 0;
+        for (uint index = 0; index < nodeAll; index++) {
+            Ad[index] = float3(0,0,0);
+            for (uint j = 0; j < nodeAll; j++) {
+                Ad[index].x += A[index*nodeAll*9+j*9+0] * d[j].x + A[index*nodeAll*9+j*9+1] * d[j].y + A[index*nodeAll*9+j*9+2] * d[j].z;
+                Ad[index].y += A[index*nodeAll*9+j*9+3] * d[j].x + A[index*nodeAll*9+j*9+4] * d[j].y + A[index*nodeAll*9+j*9+5] * d[j].z;
+                Ad[index].z += A[index*nodeAll*9+j*9+6] * d[j].x + A[index*nodeAll*9+j*9+7] * d[j].y + A[index*nodeAll*9+j*9+8] * d[j].z; 
+            }
+            alpha += d[index].x * Ad[index].x + d[index].y * Ad[index].y + d[index].z * Ad[index].z;
+        }
+        sum2 = true;
+    }
+}
+
+static void updateRes2Pos(uint2 id) {
+    if (IsBreak) {return;}
+    uint index = id.x + id.y * nodeNum.x;
+    res2[index] = res2[index] - Ad[index]*rho/alpha;
+    pos[index].xyz = pos[index].xyz + d[index]*rho/alpha;
+    // pin two up corner
+    if (id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1)) {
+        pos[index] = pos_pre[index];
+    }
+    rho_old = rho;
+    rho = 0;
+    alpha = 0;
+    beta = 0;
 }
 
 // collision with sphere
@@ -305,12 +243,20 @@ static void updateNorm(uint2 id) {
 static void updatePos(uint2 id) {
     uint index = id.x + id.y * nodeNum.x;
     uint nodeAll = nodeNum.x * nodeNum.y;
-    float3 position = pos[index].xyz;
-    float3 velocity = vel[index];
-    position += velocity * dt;
-    pos[index] = float4(position,1);
+    vel[index] = (pos[index].xyz - pos_pre[index].xyz)/dt;
+
     updateNorm(id);
     checkSphereCollision(id);
+    
+    if (IsBreak) {
+        IsBreak = false;
+        sum1 = false;
+        sum2 = false;
+        rho_old = 1;
+    }
+    
+    pos_pre[index] = pos[index];
+    force[index] = float3(0,0,0);
     for (uint i=0; i<nodeAll; i++) {
         for (uint n=0; n<9; n++) {
             df[index*nodeAll*9+i*9+n] = 0;
@@ -323,48 +269,53 @@ static void updatePos(uint2 id) {
 #define THREAD_Y 8
 
 [numthreads(THREAD_X,THREAD_Y,1)]
-void Init (uint3 id : SV_DispatchThreadID)
-{
+void Init (uint3 id : SV_DispatchThreadID) {
     uint index = id.x + id.y * nodeNum.x;
     uint nodeAll = nodeNum.x * nodeNum.y;
     pos[index] = float4(id.x * springIniLen,0,id.y * springIniLen,0);
+    pos_pre[index] = pos[index];
     vel[index] = float3(0,0,0);
-    velocity_pre[index] = float3(0,0,0);
     force[index] = float3(0,0,0);
-    b[index] = float3(0,0,0);
     norm[index] = float4(0,1,0,0);
-    // for (uint i=0; i<nodeAll; i++) {
-    //     for (uint n=0; n<9; n++) {
-    //         df[index*nodeAll*9+i*9+n] = 0;
-    //         A[index*nodeAll*9+i*9+n] = 0;
-    //     }
-    // }
+    for (uint i=0; i<nodeAll; i++) {
+        for (uint n=0; n<9; n++) {
+            A[index*nodeAll*9+i*9+n] = 0;
+            df[index*nodeAll*9+i*9+n] = 0;
+        }
+    }
 }
 
 [numthreads(THREAD_X,THREAD_Y,1)]
-void UpdateF (uint3 id : SV_DispatchThreadID)
-{
+void UpdateF (uint3 id : SV_DispatchThreadID) {
     updateForce(id.xy);
 }
 
 [numthreads(THREAD_X,THREAD_Y,1)]
-void UpdateJ (uint3 id : SV_DispatchThreadID)
-{
-    JacobianIteration(id.xy);
+void UpdateRhs (uint3 id : SV_DispatchThreadID) {
+    updateRhs(id.xy);
 }
 
 [numthreads(THREAD_X,THREAD_Y,1)]
-void UpdateV (uint3 id : SV_DispatchThreadID)
-{
-    updateVelocity(id.xy);
+void UpdateRes2 (uint3 id : SV_DispatchThreadID) {
+    updateRes2(id.xy);
 }
 
 [numthreads(THREAD_X,THREAD_Y,1)]
-void UpdateP (uint3 id : SV_DispatchThreadID)
-{
-    if(id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1) ){
-        //pin two corner
-        return;
-    }
+void UpdateD (uint3 id : SV_DispatchThreadID) {
+    updateD(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateAd (uint3 id : SV_DispatchThreadID) {
+    updateAd(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateRes2Pos (uint3 id : SV_DispatchThreadID) {
+    updateRes2Pos(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateP (uint3 id : SV_DispatchThreadID) {
     updatePos(id.xy);
 }

@@ -5,10 +5,15 @@ using UnityEngine.Rendering;
 
 public class ImplictGPU : MonoBehaviour
 {
-    float deltaTime = 0.002f;
+    float deltaTime = 0.02f;
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
     private int nodeNum = 16;
+     private float ksStretch = 10000;
+    private float ksShear = 10000;
+    private float ksBend = 10000;
+    private float wind = -5;
+
     private bool _initialized = false;
 
     [SerializeField]
@@ -17,24 +22,27 @@ public class ImplictGPU : MonoBehaviour
     public Shader ClothShader;
     private Material material;
 
-    private float ksStretch = 10000;
-    private float ksShear = 10000;
-    private float ksBend = 10000;
-    private float wind = -5;
-
     private ComputeBuffer _positionBuffer;
+    private ComputeBuffer _posPreBuffer;
     private ComputeBuffer _normalBuffer;
     private ComputeBuffer _velocitiesBuffer;
     private ComputeBuffer _forceBuffer;
     private ComputeBuffer _ABuffer;
     private ComputeBuffer _dfBuffer;
-    private ComputeBuffer _bBuffer;
-    private ComputeBuffer _velocityPreBuffer;
+    private ComputeBuffer _resBuffer; 
+    private ComputeBuffer _rhsBuffer;
+    private ComputeBuffer _inertiaBuffer;
+    private ComputeBuffer _dBuffer;
+    private ComputeBuffer _res2Buffer;
+    private ComputeBuffer _AdBuffer;
 
     private int _kernelInit;
     private int _kernelStepForce;
-    private int _kernelStepJacobian;
-    private int _kernelStepVelocity;
+    private int _kernelStepRhs;
+    private int _kernelStepRes2;
+    private int _kernelStepD;
+    private int _kernelStepAd;
+    private int _kernelStepRes2Pos;
     private int _kernelStepPosition;
     private int _groupX;
     private int _groupY;
@@ -49,37 +57,53 @@ public class ImplictGPU : MonoBehaviour
     public AsyncGPUReadbackRequest Initialize() {
         _kernelInit = ImCompute.FindKernel("Init");
         _kernelStepForce = ImCompute.FindKernel("UpdateF");
-        _kernelStepJacobian = ImCompute.FindKernel("UpdateJ");
-        _kernelStepVelocity = ImCompute.FindKernel("UpdateV");
         _kernelStepPosition = ImCompute.FindKernel("UpdateP");
+        _kernelStepRhs = ImCompute.FindKernel("UpdateRhs");
+        _kernelStepRes2 = ImCompute.FindKernel("UpdateRes2");
+        _kernelStepD = ImCompute.FindKernel("UpdateD");
+        _kernelStepAd = ImCompute.FindKernel("UpdateAd");
+        _kernelStepRes2Pos = ImCompute.FindKernel("UpdateRes2Pos");
 
         ImCompute.SetInts("nodeNum", nodeNum, nodeNum);
         UpdateParameters();
 
         _positionBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _posPreBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _velocitiesBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _normalBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _forceBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _ABuffer = new ComputeBuffer(9*nodeNum*nodeNum*nodeNum*nodeNum,16);
         _dfBuffer  = new ComputeBuffer(9*nodeNum*nodeNum*nodeNum*nodeNum,16);
-        _bBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
-        _velocityPreBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _resBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _rhsBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _inertiaBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _dBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _res2Buffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _AdBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
 
         System.Action<int> setBufferForKernet = (k)=>{
             ImCompute.SetBuffer(k,"vel",_velocitiesBuffer);
             ImCompute.SetBuffer(k,"pos",_positionBuffer);
+            ImCompute.SetBuffer(k,"pos_pre",_posPreBuffer);
             ImCompute.SetBuffer(k,"norm",_normalBuffer);
             ImCompute.SetBuffer(k,"force",_forceBuffer);
             ImCompute.SetBuffer(k,"A",_ABuffer);
             ImCompute.SetBuffer(k,"df",_dfBuffer);
-            ImCompute.SetBuffer(k,"b",_bBuffer);
-            ImCompute.SetBuffer(k,"velocity_pre",_velocityPreBuffer);
+            ImCompute.SetBuffer(k,"res",_resBuffer);
+            ImCompute.SetBuffer(k,"rhs",_rhsBuffer);
+            ImCompute.SetBuffer(k,"inertia",_inertiaBuffer);
+            ImCompute.SetBuffer(k,"d",_dBuffer);
+            ImCompute.SetBuffer(k,"res2",_res2Buffer);
+            ImCompute.SetBuffer(k,"Ad",_AdBuffer);
         };
 
         setBufferForKernet(_kernelInit);
         setBufferForKernet(_kernelStepForce);
-        setBufferForKernet(_kernelStepJacobian);
-        setBufferForKernet(_kernelStepVelocity);
+        setBufferForKernet(_kernelStepRhs);
+        setBufferForKernet(_kernelStepRes2);
+        setBufferForKernet(_kernelStepD);
+        setBufferForKernet(_kernelStepAd);
+        setBufferForKernet(_kernelStepRes2Pos);
         setBufferForKernet(_kernelStepPosition);
 
         ImCompute.Dispatch(_kernelInit,_groupX,_groupY,1);
@@ -133,9 +157,12 @@ public class ImplictGPU : MonoBehaviour
             while(dt > deltaTime) {
                 ImCompute.SetFloat("dt", deltaTime);
                 ImCompute.Dispatch(_kernelStepForce,_groupX,_groupY,1);
-                for (int iter=0; iter<10; iter++) {
-                    ImCompute.Dispatch(_kernelStepJacobian,_groupX,_groupY,1);
-                    ImCompute.Dispatch(_kernelStepVelocity,_groupX,_groupY,1);
+                ImCompute.Dispatch(_kernelStepRhs,_groupX,_groupY,1);
+                ImCompute.Dispatch(_kernelStepRes2,_groupX,_groupY,1);
+                for (int iter=0; iter<20; iter++) {
+                    ImCompute.Dispatch(_kernelStepD,_groupX,_groupY,1);
+                    ImCompute.Dispatch(_kernelStepAd,_groupX,_groupY,1);
+                    ImCompute.Dispatch(_kernelStepRes2Pos,_groupX,_groupY,1);
                 }
                 ImCompute.Dispatch(_kernelStepPosition,_groupX,_groupY,1);
                 dt -= deltaTime;
@@ -182,6 +209,10 @@ public class ImplictGPU : MonoBehaviour
             _positionBuffer.Release();
             _positionBuffer = null;
         }
+        if(_posPreBuffer != null){
+            _posPreBuffer.Release();
+            _posPreBuffer = null;
+        }
         if(_velocitiesBuffer != null){
             _velocitiesBuffer.Release();
             _velocitiesBuffer = null;
@@ -198,13 +229,29 @@ public class ImplictGPU : MonoBehaviour
             _dfBuffer.Release();
             _dfBuffer = null;
         }
-        if(_bBuffer != null){
-            _bBuffer.Release();
-            _bBuffer = null;
+        if(_resBuffer != null){
+            _resBuffer.Release();
+            _resBuffer = null;
         }
-        if(_velocityPreBuffer != null){
-            _velocityPreBuffer.Release();
-            _velocityPreBuffer = null;
+        if(_rhsBuffer != null){
+            _rhsBuffer.Release();
+            _rhsBuffer = null;
+        }
+        if(_inertiaBuffer != null){
+            _inertiaBuffer.Release();
+            _inertiaBuffer = null;
+        }
+        if(_dBuffer != null){
+            _dBuffer.Release();
+            _dBuffer = null;
+        }
+        if(_res2Buffer != null){
+            _res2Buffer.Release();
+            _res2Buffer = null;
+        }
+        if(_AdBuffer != null){
+            _AdBuffer.Release();
+            _AdBuffer = null;
         }
         if(_indexBuffer != null){
             _indexBuffer.Release();
