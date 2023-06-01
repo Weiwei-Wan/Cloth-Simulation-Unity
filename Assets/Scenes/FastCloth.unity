@@ -153,7 +153,7 @@ SphereCollider:
   m_IsTrigger: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 1
+  m_Radius: 0.5
   m_Center: {x: 0, y: 0, z: 0}
 --- !u!23 &76172419
 MeshRenderer:
@@ -213,9 +213,9 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 76172417}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -2, z: 0}
-  m_LocalScale: {x: 4, y: 4, z: 4}
-  m_ConstrainProportionsScale: 0
+  m_LocalPosition: {x: -1.8, y: -2, z: 0}
+  m_LocalScale: {x: 2, y: 2, z: 2}
+  m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 0}
   m_RootOrder: 3
@@ -384,15 +384,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c499fe2539a5e4ed7acc5f2302834825, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  gravity: 9.8
-  frontWindForce: 5
-  upLeftFixed: 1
-  upRightFixed: 1
-  downLeftFixed: 0
-  downRightFixed: 0
-  ksStretch: 1000
-  ksShear: 1000
-  ksBend: 1000
 --- !u!1 &1499491441
 GameObject:
   m_ObjectHideFlags: 0
@@ -421,7 +412,7 @@ Light:
   serializedVersion: 10
   m_Type: 1
   m_Shape: 0
-  m_Color: {r: 0.16398184, g: 0.19467492, b: 0.6320754, a: 1}
+  m_Color: {r: 0.16753832, g: 0.16019939, b: 0.754717, a: 1}
   m_Intensity: 1
   m_Range: 10
   m_SpotAngle: 30
@@ -564,7 +555,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1732102122}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -15}
+  m_LocalPosition: {x: -1.8, y: -2, z: -5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []

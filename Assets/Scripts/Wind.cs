@@ -14,12 +14,11 @@ public class Wind : MonoBehaviour
     float node_mass = 1;
     float dt = 0.02f;
     const int node_row_num = 16;
-
+    const int radius = 1;
 
     Mesh mesh;
     MeshFilter meshFilter;
     private GameObject sphere;
-    const int radius = 1;
 
     public int method;
     public string[] method_options;
@@ -77,9 +76,7 @@ public class Wind : MonoBehaviour
         StartCoroutine(StartAsync());
     }
 
-    void drawTriangle()
-    {
-        float dx_space = 10.0f / (node_row_num - 1);
+    void drawTriangle() {
         for (int j = 0; j < node_row_num; j++)
         {
             for (int i = 0; i < node_row_num; i++)

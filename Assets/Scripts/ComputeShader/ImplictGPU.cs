@@ -8,7 +8,7 @@ public class ImplictGPU : MonoBehaviour
     float deltaTime = 0.02f;
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
-    private int nodeNum = 16;
+    private int nodeNum = 8;
      private float ksStretch = 10000;
     private float ksShear = 10000;
     private float ksBend = 10000;
@@ -24,6 +24,7 @@ public class ImplictGPU : MonoBehaviour
 
     private ComputeBuffer _positionBuffer;
     private ComputeBuffer _posPreBuffer;
+    private ComputeBuffer _posTempBuffer;
     private ComputeBuffer _normalBuffer;
     private ComputeBuffer _velocitiesBuffer;
     private ComputeBuffer _forceBuffer;
@@ -35,6 +36,7 @@ public class ImplictGPU : MonoBehaviour
     private ComputeBuffer _dBuffer;
     private ComputeBuffer _res2Buffer;
     private ComputeBuffer _AdBuffer;
+    private ComputeBuffer _paraBuffer;
 
     private int _kernelInit;
     private int _kernelStepForce;
@@ -42,6 +44,7 @@ public class ImplictGPU : MonoBehaviour
     private int _kernelStepRes2;
     private int _kernelStepD;
     private int _kernelStepAd;
+    private int _kernelStepAlpha;
     private int _kernelStepRes2Pos;
     private int _kernelStepPosition;
     private int _groupX;
@@ -62,6 +65,7 @@ public class ImplictGPU : MonoBehaviour
         _kernelStepRes2 = ImCompute.FindKernel("UpdateRes2");
         _kernelStepD = ImCompute.FindKernel("UpdateD");
         _kernelStepAd = ImCompute.FindKernel("UpdateAd");
+        _kernelStepAlpha = ImCompute.FindKernel("UpdateAlpha");
         _kernelStepRes2Pos = ImCompute.FindKernel("UpdateRes2Pos");
 
         ImCompute.SetInts("nodeNum", nodeNum, nodeNum);
@@ -69,6 +73,7 @@ public class ImplictGPU : MonoBehaviour
 
         _positionBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _posPreBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _posTempBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _velocitiesBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _normalBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _forceBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
@@ -80,11 +85,13 @@ public class ImplictGPU : MonoBehaviour
         _dBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _res2Buffer = new ComputeBuffer(nodeNum*nodeNum,16);
         _AdBuffer = new ComputeBuffer(nodeNum*nodeNum,16);
+        _paraBuffer = new ComputeBuffer(7,16);
 
         System.Action<int> setBufferForKernet = (k)=>{
             ImCompute.SetBuffer(k,"vel",_velocitiesBuffer);
             ImCompute.SetBuffer(k,"pos",_positionBuffer);
             ImCompute.SetBuffer(k,"pos_pre",_posPreBuffer);
+            ImCompute.SetBuffer(k,"pos_temp",_posTempBuffer);
             ImCompute.SetBuffer(k,"norm",_normalBuffer);
             ImCompute.SetBuffer(k,"force",_forceBuffer);
             ImCompute.SetBuffer(k,"A",_ABuffer);
@@ -95,6 +102,7 @@ public class ImplictGPU : MonoBehaviour
             ImCompute.SetBuffer(k,"d",_dBuffer);
             ImCompute.SetBuffer(k,"res2",_res2Buffer);
             ImCompute.SetBuffer(k,"Ad",_AdBuffer);
+            ImCompute.SetBuffer(k,"para",_paraBuffer);
         };
 
         setBufferForKernet(_kernelInit);
@@ -103,6 +111,7 @@ public class ImplictGPU : MonoBehaviour
         setBufferForKernet(_kernelStepRes2);
         setBufferForKernet(_kernelStepD);
         setBufferForKernet(_kernelStepAd);
+        setBufferForKernet(_kernelStepAlpha);
         setBufferForKernet(_kernelStepRes2Pos);
         setBufferForKernet(_kernelStepPosition);
 
@@ -162,6 +171,7 @@ public class ImplictGPU : MonoBehaviour
                 for (int iter=0; iter<20; iter++) {
                     ImCompute.Dispatch(_kernelStepD,_groupX,_groupY,1);
                     ImCompute.Dispatch(_kernelStepAd,_groupX,_groupY,1);
+                    ImCompute.Dispatch(_kernelStepAlpha,_groupX,_groupY,1);
                     ImCompute.Dispatch(_kernelStepRes2Pos,_groupX,_groupY,1);
                 }
                 ImCompute.Dispatch(_kernelStepPosition,_groupX,_groupY,1);
@@ -213,6 +223,10 @@ public class ImplictGPU : MonoBehaviour
             _posPreBuffer.Release();
             _posPreBuffer = null;
         }
+        if(_posTempBuffer != null){
+            _posTempBuffer.Release();
+            _posTempBuffer = null;
+        }
         if(_velocitiesBuffer != null){
             _velocitiesBuffer.Release();
             _velocitiesBuffer = null;
@@ -252,6 +266,10 @@ public class ImplictGPU : MonoBehaviour
         if(_AdBuffer != null){
             _AdBuffer.Release();
             _AdBuffer = null;
+        }
+        if(_paraBuffer != null){
+            _paraBuffer.Release();
+            _paraBuffer = null;
         }
         if(_indexBuffer != null){
             _indexBuffer.Release();

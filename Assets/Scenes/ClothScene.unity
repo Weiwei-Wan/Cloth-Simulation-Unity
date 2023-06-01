@@ -384,7 +384,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 23b6bb57a25fc4c35bc478ad645feb03, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  method: 2
+  method: 0
   method_options:
   - explict Eluer method
   - semi-implict Eluer method
