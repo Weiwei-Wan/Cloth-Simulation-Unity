@@ -40,8 +40,6 @@ public class WindFast : MonoBehaviour
     float shearSpringLen;
     float bendSpringLen;
 
-    Vector2[] uvs = new Vector2[node_num];
-
     Vector3[,] L = new Vector3[node_num, node_num];
     Vector3[,] J = new Vector3[node_num, 6*node_num];
     Vector3[,] Q = new Vector3[node_num, node_num];
@@ -49,15 +47,12 @@ public class WindFast : MonoBehaviour
     Vector3[] inertia = new Vector3[node_num];
     Vector3[] rhs = new Vector3[node_num];
     Vector3[] Jd = new Vector3[node_num];
-    Vector3[] My = new Vector3[node_num];
     Vector3[] force = new Vector3[node_num];
     Vector3[] pos = new Vector3[node_num];
     Vector3[] pos_pre = new Vector3[node_num];
     Vector3[] initial_pos = new Vector3[node_num];
     Vector3[] velocity = new Vector3[node_num];
     Vector3[] d_val = new Vector3[6*node_num];
-
-    int cnt = 0;
     
     void Start()
     {
@@ -180,6 +175,7 @@ public class WindFast : MonoBehaviour
                 ch_L[i,j].z = ch_v[i].z / Mathf.Sqrt(ch_v[j].z);
             }
         }
+        print(ch_v[50]);
     }
 
     Vector3[] CholeskySolve(Vector3[] rhs_)

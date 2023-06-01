@@ -1,203 +1,295 @@
-// // Each #kernel tells which function to compile; you can have many kernels
-// #pragma kernel Init
-// #pragma kernel UpdateV
-// #pragma kernel UpdateP
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel InitJL
+#pragma kernel InitQ
+#pragma kernel InitCHL
+#pragma kernel UpdateDval
+#pragma kernel UpdateJd
+#pragma kernel CholeskySolve1
+#pragma kernel CholeskySolve2
+#pragma kernel UpdateP
 
-// RWStructuredBuffer<float4> pos; //position
-// RWStructuredBuffer<float4> norm; //normal
-// RWStructuredBuffer<float3> vel; //velocity
-// RWStructuredBuffer<float> L;
-// RWStructuredBuffer<float> J;
-// RWStructuredBuffer<float3> Q;
-// RWStructuredBuffer<float3> ch_L;
-// RWStructuredBuffer<float3> ch_v;
-// RWStructuredBuffer<float3> inertia;
-// RWStructuredBuffer<float3> rhs;
-// RWStructuredBuffer<float3> Jd;
-// RWStructuredBuffer<float3> My;
-// RWStructuredBuffer<float3> force;
-// RWStructuredBuffer<float3> pos_pre;
-// RWStructuredBuffer<float3> initial_pos;
-// RWStructuredBuffer<float3> d_val;
-// RWStructuredBuffer<float3> uvs;
+RWStructuredBuffer<float4> pos; //position
+RWStructuredBuffer<float4> norm; //normal
+RWStructuredBuffer<float3> vel; //velocity
+RWStructuredBuffer<float3> L;
+RWStructuredBuffer<float3> J;
+RWStructuredBuffer<float3> Q;
+RWStructuredBuffer<float3> ch_L;
+RWStructuredBuffer<float3> ch_v;
+RWStructuredBuffer<float3> rhs;
+RWStructuredBuffer<float3> Jd;
+RWStructuredBuffer<float3> force;
+RWStructuredBuffer<float4> pos_pre;
+//RWStructuredBuffer<float4> initial_pos;
+RWStructuredBuffer<float3> d_val;
+RWStructuredBuffer<float3> resultTemp;
+RWStructuredBuffer<float3> result;
+RWStructuredBuffer<float> ttt;
 
+uint2 nodeNum;  // row: x  col:y
+float ksStretch;
+float ksShear;
+float ksBend;
+float wind;
+float dt;
 
-// uint2 nodeNum;  // row: x  col:y
-// float ksStretch;
-// float ksShear;
-// float ksBend;
-// float wind;
-// float dt;
+#define springIniLen 0.1
+#define mass 1
+#define damp 1
 
-// #define size 2
-// #define springIniLen 0.1
-// #define mass 1
-// #define damp 1
+// collision with sphere
+uniform float3 sphere;
+#define radius 1
 
-// // collision with sphere
-// uniform float3 sphere;
-// #define radius 1
+static uint2 StretchSpringDir[4] = {{1,0},{0,1},{-1,0},{0,-1}};
+static uint2 ShearSpringDir[4] = {{2,0},{0,2},{-2,0},{0,-2}};
+static uint2 BendSpringDir[4] = {{1,1},{-1,1},{-1,-1},{1,-1}};
+static uint2 NormDir[4] = {{1,0},{0,1},{-1,0},{0,-1},};
 
-// static uint2 StretchSpringDir[4] = {{1,0},{0,1},{-1,0},{0,-1}};
-// static uint2 ShearSpringDir[4] = {{2,0},{0,2},{-2,0},{0,-2}};
-// static uint2 BendSpringDir[4] = {{1,1},{-1,1},{-1,-1},{1,-1}};
-// static uint2 NormDir[4] = {{1,0},{0,1},{-1,0},{0,-1},};
+static bool hasThisPos(uint2 id) {
+    return id.x >= 0 && id.x < nodeNum.x && id.y >=0 && id.y < nodeNum.y;
+}
 
-// static bool hasThisPos(uint2 id) {
-//     return id.x >= 0 && id.x < nodeNum.x && id.y >=0 && id.y < nodeNum.y;
-// }
+static void initLJ(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
 
-// static void initLJ(uint2 id) {
-//     uint index = id.x + id.y * nodeNum.x;
+    L[index*nodeAll+index] = float3(0,0,0);
+    for (uint type = 0; type < 3; type++) {
+        for (uint t = 0; t < 4; t++) {
+            // stretch
+            uint2 next_id = id + StretchSpringDir[t];
+            float ks=ksStretch;
+            // shear
+            if (type == 1) {
+                next_id = id + ShearSpringDir[t];
+                ks=ksShear;
+            }
+            // bend
+            else if (type == 2) {
+                next_id = id + BendSpringDir[t];
+                ks=ksBend;
+            }
 
-//     L[index, index] = float3(0,0,0);
-//     L[index, next_index] = float3(0,0,0);
-//     J[index, index*12+(type*4+t)] = float3(0,0,0);
-//     J[next_index*3+n, index*12+(type*4+t)] = float3(0,0,0);
+            if (hasThisPos(next_id)) {
+                uint next_index = next_id.x + next_id.y * nodeNum.x;
+                L[index*nodeAll+index] += float3(ks,ks,ks);
+                L[index*nodeAll+next_index] = float3(-ks,-ks,-ks);                  
+                J[index*nodeAll*12+index*12+(type*4+t)] = float3(ks,ks,ks);
+            } 
+        }
+    }
+}
 
-//     for (uint type = 0; type < 3; type++) {
-//         for (uint t = 0; t < 4; t++) {
-//             // stretch
-//             uint2 next_id = id + StretchSpringDir[t];
-//             float ks=ksStretch;
-//             // shear
-//             if (type == 1) {
-//                 next_id = id + ShearSpringDir[t];
-//                 ks=ksShear;
-//             }
-//             // bend
-//             else if (type == 2) {
-//                 next_id = id + BendSpringDir[t];
-//                 ks=ksBend;
-//             }
+static void initQ(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    for (uint j=0; j<nodeAll; j++) {
+        if (index == j) {Q[index*nodeAll+j] = float3(mass,mass,mass) + dt * dt * L[index*nodeAll+j];}
+        else {Q[index*nodeAll+j] = dt * dt * L[index*nodeAll+j];}
+        ch_L[index*nodeAll+j] = float3(0,0,0);
+    }
+}
 
-//             if (hasThisPos(next_id)) {
-//                 uint next_index = next_id.x + next_id.y * nodeNum.x;
-//                 L[index, index] += float3(ks,ks,ks);
-//                 L[index, next_index] -= float3(ks,ks,ks);                  
-//                 J[index, index*12+(type*4+t)] += float3(ks,ks,ks);
-//             } 
-//         }
-//     }
-// }
+static void initCHL(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    for (int i=index; i<nodeAll; i++) {
+        ch_v[i] = Q[i*nodeAll+index];
+        for (uint k = 0; k < index; k++) {
+            ch_v[i].x -= ch_L[index*nodeAll+k].x * ch_L[i*nodeAll+k].x;
+            ch_v[i].y -= ch_L[index*nodeAll+k].y * ch_L[i*nodeAll+k].y;
+            ch_v[i].z -= ch_L[index*nodeAll+k].z * ch_L[i*nodeAll+k].z;
+        }
+        ch_L[i*nodeAll+index].x = ch_v[i].x / sqrt(ch_v[index].x);
+        ch_L[i*nodeAll+index].y = ch_v[i].y / sqrt(ch_v[index].y);
+        ch_L[i*nodeAll+index].z = ch_v[i].z / sqrt(ch_v[index].z);
+    }
+    if (ch_v[50].x < 1) {
+        ttt[0] = 1;
+    }
+}
 
-// static void updateQ(uint2 id) {
-//     uint index = id.x + id.y * nodeNum.x;
-//     for (uint j=0; j<nodeNum.x; j++) {
-//         if (index == j) {Q[index*nodeNum.x+j] = float3(mass,mass,mass) + dt * dt * L[index*nodeNum.x+j];}
-//         else {Q[index*nodeNum.x+j] = dt * dt * L[index*nodeNum.x+j];}
-//         ch_L[index*nodeNum.x+j] = 0;
-//     }
-// }
+static void computeDVal(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    //gravity
+    force[index] = float3(0,-9.8,0) * mass;
+    //wind
+    force[index] += 2*dot(norm[index], float3(0,0,wind)-vel[index])*norm[index];
+    //Damp
+    force[index] += - damp * vel[index];
+        
+    for (int type = 0; type < 3; type++) {
+        for (int t = 0; t < 4; t++) {
+            // stretch
+            uint2 next_id = id + StretchSpringDir[t];
+            float len = springIniLen;
+            // shear
+            if (type == 1) {
+                next_id = id + ShearSpringDir[t];
+                len = 2*springIniLen;
+            }
+            // bend
+            else if (type == 2) {
+                next_id = id + BendSpringDir[t];
+                len = 1.414f*springIniLen;
+            }
+            if (hasThisPos(next_id)) {
+                uint next_index = next_id.x + next_id.y * nodeNum.x;
+                // Hooke's law
+                float3 diff = pos[index].xyz - pos[next_index].xyz;
+                float _norm = sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z);
+                d_val[index*12+type*4+t] = len * diff / _norm;
+            }
+        }
+    }
+}
 
-// static void updateQ(uint2 id) {
-//     uint index = id.x + id.y * nodeNum.x;
-//     for (int j=0; j<node_num*3; j++) {
-//         for (int i=j; i<node_num*3; i++) {
-//             ch_v[i] = Q[i,j];
-//             for(int k = 0; k < j;k++)
-//             {
-//                 ch_v[i] -= ch_L[j,k] * ch_L[i,k];
-//             }
-//             ch_L[i,j] = ch_v[i] / Mathf.Sqrt(ch_v[j]);
-//         }
-//     }
-// }
+static void computeJd(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    Jd[index] = float3(0,0,0);
+    for (int j = 0; j < 12*nodeAll; j++) {
+        Jd[index].x += J[index*nodeAll*12+j].x * d_val[j].x;
+        Jd[index].y += J[index*nodeAll*12+j].y * d_val[j].y;
+        Jd[index].z += J[index*nodeAll*12+j].z * d_val[j].z;
+    }
+    rhs[index] = dt * dt * Jd[index] + mass * (2 * pos[index] - pos_pre[index]) + dt * dt * force[index];
+    pos_pre[index] = pos[index];
+}
 
-// static float3 computeForce(uint2 id) {
-//     //gravity
-//     f += float3(0,-9.8,0) * mass;
-//     //wind
-//     f += 2*dot(normal, float3(0,0,wind)-velocity)*normal;
-//     //damp
-//     f += - damp * velocity;
-//     return f;
-// }
+static void choleskySolve1(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    resultTemp[index].x = rhs[index].x / ch_L[index*nodeAll+index].x;
+    resultTemp[index].y = rhs[index].y / ch_L[index*nodeAll+index].y;
+    resultTemp[index].z = rhs[index].z / ch_L[index*nodeAll+index].z;
+    for (uint j = 0; j < index; j++) { 
+        resultTemp[index].x -= ch_L[index*nodeAll+j].x / ch_L[index*nodeAll+index].x * resultTemp[j].x;
+        resultTemp[index].y -= ch_L[index*nodeAll+j].y / ch_L[index*nodeAll+index].y * resultTemp[j].y;
+        resultTemp[index].z -= ch_L[index*nodeAll+j].z / ch_L[index*nodeAll+index].z * resultTemp[j].z;
+    }
+}
 
-// // collision with sphere
-// static void checkSphereCollision(uint2 id){
-//     uint index = id.x + id.y * nodeNum.x;
-//     float3 position = pos[index].xyz;
-//     float3 velocity = vel[index];
-//     float s_distance = distance(position, sphere);
-//     float safe_radius = radius + 0.02f;
-//     if (s_distance < safe_radius) {
-//         float3 s_pos_dir = normalize(position - sphere);
-//         position = position - (s_distance-safe_radius)*s_pos_dir;
-//         velocity = velocity - dot(velocity,s_pos_dir)*s_pos_dir;
-//         pos[index] = float4(position,1);
-//         vel[index] = velocity;
-//     }
-// }
+static void choleskySolve2(uint2 id) {
+    uint nodeAll = nodeNum.x * nodeNum.y;
+    uint index = nodeAll - id.x - id.y * nodeNum.x;
+    result[index].x = resultTemp[index].x / ch_L[index*nodeAll+index].x;
+    result[index].y = resultTemp[index].y / ch_L[index*nodeAll+index].y;
+    result[index].z = resultTemp[index].z / ch_L[index*nodeAll+index].z;
+    for (uint j = index + 1; j < nodeAll; j++) {
+        result[index].x -= ch_L[j*nodeAll+index].x / ch_L[index*nodeAll+index].x * result[j].x;
+        result[index].y -= ch_L[j*nodeAll+index].y / ch_L[index*nodeAll+index].y * result[j].y;
+        result[index].z -= ch_L[j*nodeAll+index].z / ch_L[index*nodeAll+index].z * result[j].z;
+    }
+}
 
-// static void updateNorm(uint2 id) {
-//     uint index = id.x + id.y * nodeNum.x;
-//     float3 position = pos[index].xyz;
-//     float3 normal = float3(0,0,0);
-//     for (uint i = 0; i < 4; i++) {
-//         uint j = (i + 1) % 4;
-//         uint2 id1 = id + NormDir[i];
-//         uint2 id2 = id + NormDir[j];
-//         if (hasThisPos(id1) && hasThisPos(id2)){
-//             float3 p1 = pos[id1.x + id1.y * nodeNum.x].xyz;
-//             float3 p2 = pos[id2.x + id2.y * nodeNum.x].xyz;
-//             float3 e1 = p1 - position;
-//             float3 e2 = p2 - position;
-//             float3 n = normalize(cross(e1,e2));
-//             normal += n;
-//             break;
-//         }
-//     }
-//     normal = normalize(normal);
-//     norm[index] = float4(normal,0);
-// }
+// collision with sphere
+static void checkSphereCollision(uint2 id){
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 velocity = vel[index];
+    float s_distance = distance(position, sphere);
+    float safe_radius = radius + 0.02f;
+    if (s_distance < safe_radius) {
+        float3 s_pos_dir = normalize(position - sphere);
+        position = position - (s_distance-safe_radius)*s_pos_dir;
+        velocity = velocity - dot(velocity,s_pos_dir)*s_pos_dir;
+        pos[index] = float4(position,1);
+        vel[index] = velocity;
+    }
+}
 
-// static void updateVelocity(uint2 id){
-//     uint index = id.x + id.y * nodeNum.x;
-//     float3 f = computeForce(id);
-//     float3 acceleration = f/mass;
-//     float3 velocity = vel[index];
-//     velocity = velocity + acceleration * dt;
-//     vel[index] = velocity;
-//     updateNorm(id);
-// }
+static void updateNorm(uint2 id) {
+    uint index = id.x + id.y * nodeNum.x;
+    float3 position = pos[index].xyz;
+    float3 normal = float3(0,0,0);
+    for (uint i = 0; i < 4; i++) {
+        uint j = (i + 1) % 4;
+        uint2 id1 = id + NormDir[i];
+        uint2 id2 = id + NormDir[j];
+        if (hasThisPos(id1) && hasThisPos(id2)){
+            float3 p1 = pos[id1.x + id1.y * nodeNum.x].xyz;
+            float3 p2 = pos[id2.x + id2.y * nodeNum.x].xyz;
+            float3 e1 = p1 - position;
+            float3 e2 = p2 - position;
+            float3 n = normalize(cross(e1,e2));
+            normal += n;
+            break;
+        }
+    }
+    normal = normalize(normal);
+    norm[index] = float4(normal,0);
+}
 
-// static void updatePos(uint2 id){
-//     uint index = id.x + id.y * nodeNum.x;
-//     float3 position = pos[index].xyz;
-//     float3 velocity = vel[index];
-//     position += velocity * dt;
-//     pos[index] = float4(position,1);
-//     checkSphereCollision(id);
-// }
+static void updatePos(uint2 id){
+    uint index = id.x + id.y * nodeNum.x;
+    pos[index] = float4(result[index],0);
+    if (ttt[0]==1) {
+        pos[index] = float4(id.x * springIniLen,0,id.y * springIniLen,0);
+    }
+    vel[index] = (pos[index].xyz - pos_pre[index].xyz)/dt;
+    checkSphereCollision(id);
+}
 
-// #define THREAD_X 8
-// #define THREAD_Y 8
+#define THREAD_X 8
+#define THREAD_Y 8
 
-// [numthreads(THREAD_X,THREAD_Y,1)]
-// void Init (uint3 id : SV_DispatchThreadID)
-// {
-//     uint index = id.x + id.y * nodeNum.x;
-//     pos[index] = float4(id.x * springIniLen,0,id.y * springIniLen,0);
-//     initial_pos[index] = pos[index];
-//     vel[index] = float3(0,0,0);
-//     norm[index] = float4(0,1,0,0);
-//     initLJ(id.xy);
-// }
+[numthreads(THREAD_X,THREAD_Y,1)]
+void InitJL (uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x + id.y * nodeNum.x;
+    pos[index] = float4(id.x * springIniLen,0,id.y * springIniLen,0);
+    //initial_pos[index] = pos[index];
+    vel[index] = float3(0,0,0);
+    norm[index] = float4(0,1,0,0);
+    ttt[0] = 0;
+    initLJ(id.xy);
+}
 
+[numthreads(THREAD_X,THREAD_Y,1)]
+void InitQ (uint3 id : SV_DispatchThreadID)
+{
+    initQ(id.xy);
+}
 
-// [numthreads(THREAD_X,THREAD_Y,1)]
-// void UpdateV (uint3 id : SV_DispatchThreadID)
-// {
-//     updateVelocity(id.xy);
-// }
+[numthreads(THREAD_X,THREAD_Y,1)]
+void InitCHL (uint3 id : SV_DispatchThreadID)
+{
+    initCHL(id.xy);
+}
 
-// [numthreads(THREAD_X,THREAD_Y,1)]
-// void UpdateP (uint3 id : SV_DispatchThreadID)
-// {
-//     if(id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1) ){
-//         //pin two corner
-//         return;
-//     }
-//     updatePos(id.xy);
-// }
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateDval (uint3 id : SV_DispatchThreadID)
+{
+    computeDVal(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateJd (uint3 id : SV_DispatchThreadID)
+{
+    computeJd(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void CholeskySolve1 (uint3 id : SV_DispatchThreadID)
+{
+    choleskySolve1(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void CholeskySolve2 (uint3 id : SV_DispatchThreadID)
+{
+    choleskySolve2(id.xy);
+}
+
+[numthreads(THREAD_X,THREAD_Y,1)]
+void UpdateP (uint3 id : SV_DispatchThreadID)
+{
+    if(id.y == 0 && (id.x == 0 || id.x == nodeNum.x - 1) ){
+        //pin two corner
+        return;
+    }
+    updatePos(id.xy);
+}

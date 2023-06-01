@@ -37,16 +37,6 @@ float dt;
 #define mass 1
 #define damp 1
 
-// para 0-6
-// float rho = 0;      0
-// float rho_old = 1;  1
-// float alpha = 0;    2
-// int IsBreak = 0;    3
-// int sum1 = 0;       4
-// int sum2 = 0;       5
-// float ttt = 0;      6
-
-
 // collision with sphere
 uniform float3 sphere;
 #define radius 1
