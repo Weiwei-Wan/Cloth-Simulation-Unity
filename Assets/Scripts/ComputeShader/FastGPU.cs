@@ -8,7 +8,7 @@ public class FastGPU : MonoBehaviour
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
 
-    float deltaTime = 0.02f;
+    float deltaTime = 0.002f;
     private int nodeNum = 16;
     private float ksStretch = 1000;
     private float ksShear = 1000;

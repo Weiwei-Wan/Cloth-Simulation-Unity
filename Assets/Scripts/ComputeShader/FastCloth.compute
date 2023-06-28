@@ -74,8 +74,10 @@ static void initLJ(uint2 id) {
             if (hasThisPos(next_id)) {
                 uint next_index = next_id.x + next_id.y * nodeNum.x;
                 L[index*nodeAll+index] += float3(ks,ks,ks);
-                L[index*nodeAll+next_index] = float3(-ks,-ks,-ks);                  
+                L[index*nodeAll+next_index] = float3(-ks,-ks,-ks);   
+
                 J[index*nodeAll*12+index*12+(type*4+t)] = float3(ks,ks,ks);
+                J[next_index*nodeAll*12+index*12+(type*4+t)] = float3(-ks,-ks,-ks);
             } 
         }
     }
@@ -105,7 +107,7 @@ static void initCHL(uint2 id) {
         ch_L[i*nodeAll+index].y = ch_v[i].y / sqrt(ch_v[index].y);
         ch_L[i*nodeAll+index].z = ch_v[i].z / sqrt(ch_v[index].z);
     }
-    if (ch_v[50].x < 1) {
+    if (ch_L[50].x < 2.4 && ch_L[50].x > 2.3) {
         ttt[0] = 1;
     }
 }

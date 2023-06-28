@@ -8,7 +8,7 @@ public class ImplictGPU : MonoBehaviour
     float deltaTime = 0.02f;
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
-    private int nodeNum = 8;
+    private int nodeNum = 16;
      private float ksStretch = 10000;
     private float ksShear = 10000;
     private float ksBend = 10000;

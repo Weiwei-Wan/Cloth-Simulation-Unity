@@ -1,9 +1,13 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 public class Wind : MonoBehaviour
 {
+    StreamWriter writer;
+    StreamReader reader;
+
     float gravity = 9.8f;
     float frontWindForce = 5;
     float Damp = 1;
@@ -12,9 +16,9 @@ public class Wind : MonoBehaviour
     float ksBend = 10000;
     float springIniLen = 0.1f;
     float node_mass = 1;
-    float dt = 0.02f;
+    float dt = 0.05f;
     const int node_row_num = 16;
-    const int radius = 1;
+    const float radius = 0.5f;
 
     Mesh mesh;
     MeshFilter meshFilter;
@@ -63,6 +67,22 @@ public class Wind : MonoBehaviour
     Vector3[] d = new Vector3[node_num];
     Vector3[] res2 = new Vector3[node_num];
     Vector3[] Ad = new Vector3[node_num];
+
+    float ex_energy = 0f;
+    float im_energy = 0f;
+
+    void WriteData(string message) {
+        FileInfo file = new FileInfo(Application.dataPath + "/im_energy05.txt");
+        if (!file.Exists) {
+            writer = file.CreateText();
+        } else {
+            writer = file.AppendText();
+        }
+        writer.WriteLine(message);
+        writer.Flush();
+        writer.Dispose();
+        writer.Close();
+    }
 
     void Awake()
     {
@@ -123,6 +143,7 @@ public class Wind : MonoBehaviour
     }
 
     void ComputeForce() {
+        ex_energy = 0f;
         for (int i=0; i<node_row_num; i++) {
             for (int j=0; j<node_row_num; j++) {
                 int index = i+j*node_row_num;
@@ -156,6 +177,8 @@ public class Wind : MonoBehaviour
                             // calculate spring force
                             force[index] -= ks*(distance-length)*pos_dir;
                             force[next_index] += ks*(distance-length)*pos_dir;
+                            //energy
+                            ex_energy += ks*(distance-length)*(distance-length)*0.5f;
                         }
                     }
                 }
@@ -180,6 +203,8 @@ public class Wind : MonoBehaviour
                 force[index] += - Damp * velocity[index];
             }
         }
+        Debug.Log("   ex_energy:   " + ex_energy);
+        WriteData(" " + ex_energy);
     }
 
     void ComputeJacobianForce()
@@ -193,7 +218,8 @@ public class Wind : MonoBehaviour
                 }
             }
         }
-
+        
+        im_energy = 0f;
         // internal spring force
         for (int i=0; i<node_row_num; i++) {
             for (int j=0; j<node_row_num; j++) {
@@ -228,6 +254,8 @@ public class Wind : MonoBehaviour
                             // calculate spring force
                             force[index] -= ks*(distance-length)*pos_dir;
                             force[next_index] += ks*(distance-length)*pos_dir;
+                            //energy
+                            im_energy += ks*(distance-length)*(distance-length)*0.5f;
                             // for implict Jacobian
                             float[] mat = {pos_dir.x*pos_dir.x, pos_dir.x*pos_dir.y, pos_dir.x*pos_dir.z, 
                                            pos_dir.y*pos_dir.x, pos_dir.y*pos_dir.y, pos_dir.y*pos_dir.z, 
@@ -271,7 +299,8 @@ public class Wind : MonoBehaviour
         if (upRightFixed) {force[node_row_num-1]=Vector3.zero;}
         if (downLeftFixed) {force[node_row_num*(node_row_num-1)]=Vector3.zero;}
         if (downRightFixed) {force[node_row_num*node_row_num-1]=Vector3.zero;}
-        Debug.Log("   pos   "+ pos[10]);
+        Debug.Log("   im_energy:   " + im_energy);
+        WriteData(" " + im_energy);
 
         for (int i = 0; i < node_num; i++) {
             inertia[i] = node_mass * (2 * pos[i] - pos_pre[i]);

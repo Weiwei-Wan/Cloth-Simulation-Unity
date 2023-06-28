@@ -1,20 +1,24 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 public class WindFast : MonoBehaviour
 {
-    float gravity = 9.8f;
-    float frontWindForce = 5;
+    StreamWriter writer;
+    StreamReader reader;
+
+    float gravity = 0.98f;
+    float frontWindForce = 0.5f;
     float Damp = 1;
     float ksStretch = 1000;
     float ksShear = 1000;
     float ksBend = 1000;
     float springIniLen = 0.1f;
-    float node_mass = 1;
-    float dt = 0.02f;
+    float node_mass = 1f;
+    float dt = 1f;
     const int node_row_num = 16;
-    const int radius = 1;
+    const float radius = 0.5f;
 
     const int node_num = node_row_num*node_row_num;
     const int element_row_num = node_row_num - 1;
@@ -53,6 +57,21 @@ public class WindFast : MonoBehaviour
     Vector3[] initial_pos = new Vector3[node_num];
     Vector3[] velocity = new Vector3[node_num];
     Vector3[] d_val = new Vector3[6*node_num];
+
+    float fast_energy = 0f;
+
+    void WriteData(string message) {
+        FileInfo file = new FileInfo(Application.dataPath + "/fast_energy1.txt");
+        if (!file.Exists) {
+            writer = file.CreateText();
+        } else {
+            writer = file.AppendText();
+        }
+        writer.WriteLine(message);
+        writer.Flush();
+        writer.Dispose();
+        writer.Close();
+    }
     
     void Start()
     {
@@ -139,8 +158,8 @@ public class WindFast : MonoBehaviour
                             int next_index = next_x + next_y*node_row_num;
                             L[index, index] += new Vector3(ks,ks,ks);
                             L[next_index, next_index] += new Vector3(ks,ks,ks);
-                            L[next_index, index] -= new Vector3(ks,ks,ks);
-                            L[index, next_index] -= new Vector3(ks,ks,ks);
+                            L[next_index, index] = new Vector3(-ks,-ks,-ks);
+                            L[index, next_index] = new Vector3(-ks,-ks,-ks);
                             
                             J[index, index*6+(type*2+t)] += new Vector3(ks,ks,ks);
                             J[next_index, index*6+(type*2+t)] -= new Vector3(ks,ks,ks);
@@ -225,6 +244,7 @@ public class WindFast : MonoBehaviour
     }
 
     void ComputePos() {
+        fast_energy = 0f;
         for (int i=0; i<node_row_num; i++) {
             for (int j=0; j<node_row_num; j++) {
                 int index = i+j*node_row_num;
@@ -251,28 +271,35 @@ public class WindFast : MonoBehaviour
                         int next_x = i+StretchSpringDir[t,0];
                         int next_y = j+StretchSpringDir[t,1];
                         float length = stretchSpringLen;
+                        float ks=ksStretch;
                         // shear
                         if (type == 1) {
                             next_x = i+ShearSpringDir[t,0];
                             next_y = j+ShearSpringDir[t,1];
                             length = shearSpringLen;
+                            ks=ksShear;
                         }
                         // bend
                         else if (type == 2) {
                             next_x = i+BendSpringDir[t,0];
                             next_y = j+BendSpringDir[t,1];
                             length = bendSpringLen;
+                            ks=ksBend;
                         }
                         if (hasThisPos(next_x, next_y)) {
                             int next_index = next_x + next_y*node_row_num;
                             Vector3 diff = pos[index] - pos[next_index];
                             float _norm = Mathf.Sqrt(diff.x*diff.x + diff.y*diff.y + diff.z*diff.z);
                             d_val[index*6+type*2+t] = length * diff / _norm;
+                            //energy
+                            fast_energy += ks*(_norm-length)*(_norm-length)*0.5f;
                         }
                     }
                 }
             }
         }
+        Debug.Log("   fast_energy:   " + fast_energy);
+        WriteData(" " + fast_energy);
 
         // compute Jd
         for (int i = 0; i < node_num; i++) {

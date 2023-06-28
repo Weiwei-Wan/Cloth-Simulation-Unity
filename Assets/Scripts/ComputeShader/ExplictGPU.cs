@@ -8,7 +8,7 @@ public class ExplictGPU : MonoBehaviour
     float deltaTime = 0.002f;
     private const int THREAD_X = 8;
     private const int THREAD_Y = 8;
-    private int nodeNum = 32;
+    private int nodeNum = 16;
     private bool _initialized = false;
 
     [SerializeField]
