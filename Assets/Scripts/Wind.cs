@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class Wind : MonoBehaviour
 {
@@ -9,14 +10,14 @@ public class Wind : MonoBehaviour
     StreamReader reader;
 
     float gravity = 9.8f;
-    float frontWindForce = 5;
+    float frontWindForce = 0f;
     float Damp = 1;
     float ksStretch = 10000;
     float ksShear = 10000;
     float ksBend = 10000;
     float springIniLen = 0.1f;
     float node_mass = 1;
-    float dt = 0.05f;
+    float dt = 0.002f;
     const int node_row_num = 16;
     const float radius = 0.5f;
 
@@ -24,8 +25,15 @@ public class Wind : MonoBehaviour
     MeshFilter meshFilter;
     private GameObject sphere;
 
-    public int method;
-    public string[] method_options;
+    public enum MethodOptions {
+        ExplictEluer, 
+        SemiImplictEluer,
+        ImplictEluer,
+        VerletIntegration,
+    };
+
+    [SerializeField]
+    private MethodOptions method = MethodOptions.ExplictEluer;
 
     bool upLeftFixed = true;
     bool upRightFixed = true;
@@ -203,8 +211,8 @@ public class Wind : MonoBehaviour
                 force[index] += - Damp * velocity[index];
             }
         }
-        Debug.Log("   ex_energy:   " + ex_energy);
-        WriteData(" " + ex_energy);
+        // Debug.Log("   ex_energy:   " + ex_energy);
+        // WriteData(" " + ex_energy);
     }
 
     void ComputeJacobianForce()
@@ -371,7 +379,7 @@ public class Wind : MonoBehaviour
 
     void Assemble()
     {
-        if (method==2) {ComputeJacobianForce();}
+        if (method==MethodOptions.ImplictEluer) {ComputeJacobianForce();}
         else {ComputeForce();}
 
         for (int i=0; i<node_num; i++) {
@@ -384,22 +392,22 @@ public class Wind : MonoBehaviour
             acceleration[i] = force[i]/node_mass;
 
             // explict euler method
-            if (method==0) {
+            if (method==MethodOptions.ExplictEluer) {
                 velocity[i] = velocity_pre[i] + dt*acceleration[i];
                 pos[i] = pos_pre[i] + dt*velocity[i];
             }
             // semi-implict Eluer method
-            else if (method==1) {
+            else if (method==MethodOptions.SemiImplictEluer) {
                 velocity[i] = velocity_pre[i] + dt*acceleration[i];
                 pos[i] = pos_pre[i] + dt*velocity[i];
             }
             // implict Eluer method
-            else if (method==2) {
+            else if (method==MethodOptions.ImplictEluer) {
                 // only for wind
                 velocity[i] = (pos[i] - pos_pre[i])/dt;
             }
             // Verlet Integration
-            else if (method==3) {
+            else if (method==MethodOptions.VerletIntegration) {
                 Vector3 x = dt*acceleration[i];
                 pos[i] = 2.0f*pos_pre[i]-pos_prepre[i] + dt*x; 
                 velocity[i] = velocity_pre[i] + 0.5f*dt*(acceleration[i]+acceleration_pre[i]);
