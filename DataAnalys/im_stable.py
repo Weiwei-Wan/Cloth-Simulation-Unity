@@ -19,7 +19,7 @@ df4 = pd.read_csv("stable_data/im_energy06.txt", sep=" ")
 X_im_06 = df4.iloc[0:, 1].astype(float)
 X_im_06 = X_im_06.to_numpy()[0:100]
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3.2, 4))
 
 x=np.arange(0,100)
 l1=plt.plot(x,X_im_02,'y--',label='dt = 0.02s')

@@ -24,7 +24,7 @@ X_fast_32_02 = X_fast_32_02.to_numpy()
 X_fast_32_02_Mean = np.mean(X_fast_32_02)
 X_fast_32_02_StdErr = np.std(X_fast_32_02, ddof=1) / np.sqrt(np.size(X_fast_32_02))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3, 4))
 
 x=[1,2,3]
 y=[X_fast_8_02_Mean, X_fast_16_02_Mean, X_fast_32_02_Mean]

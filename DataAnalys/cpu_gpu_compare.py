@@ -39,7 +39,7 @@ X_im_gpu = X_im_gpu.to_numpy()
 X_im_gpu_Mean = np.mean(X_im_gpu)
 X_im_gpu_StdErr = np.std(X_im_gpu, ddof=1) / np.sqrt(np.size(X_im_gpu))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3, 4))
 
 x=[1,2,3]
 y1=[X_ex_cpu_Mean, X_im_cpu_Mean, X_fast_cpu_Mean]
@@ -52,7 +52,7 @@ a = plt.bar(x,y1,width=0.3,yerr=std_err1,error_kw=error_params, label='CPU', fc=
 x=[1.4,2.4,3.4]
 b = plt.bar(x,y2,width=0.3,yerr=std_err2,error_kw=error_params, label='GPU', fc="g")
 
-plt.xlabel('Algorithm')
+#plt.xlabel('Algorithm')
 plt.ylabel('Time / Frame (ms)')
 plt.yscale('log')
 plt.legend()

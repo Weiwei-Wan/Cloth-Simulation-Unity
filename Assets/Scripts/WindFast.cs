@@ -16,7 +16,7 @@ public class WindFast : MonoBehaviour
     float ksBend = 1000;
     float springIniLen = 0.1f;
     float node_mass = 1f;
-    float dt = 1f;
+    float dt = 0.02f;
     const int node_row_num = 16;
     const float radius = 0.5f;
 
@@ -298,8 +298,8 @@ public class WindFast : MonoBehaviour
                 }
             }
         }
-        Debug.Log("   fast_energy:   " + fast_energy);
-        WriteData(" " + fast_energy);
+        //Debug.Log("   fast_energy:   " + fast_energy);
+       // WriteData(" " + fast_energy);
 
         // compute Jd
         for (int i = 0; i < node_num; i++) {

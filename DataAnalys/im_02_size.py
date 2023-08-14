@@ -23,7 +23,7 @@ X_im_32_02 = X_im_32_02.to_numpy()
 X_im_32_02_Mean = np.mean(X_im_32_02)
 X_im_32_02_StdErr = np.std(X_im_32_02, ddof=1) / np.sqrt(np.size(X_im_32_02))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3, 4))
 
 x=[1,2,3]
 y=[X_im_8_02_Mean, X_im_16_02_Mean, X_im_32_02_Mean]

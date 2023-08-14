@@ -5,11 +5,19 @@ using UnityEngine;
 public class human : MonoBehaviour {
     Mesh mesh;
     MeshFilter meshFilter;
-    private GameObject ObjHuman;
     const int radius = 1;
 
-    public int method;
-    public string[] method_options;
+    public enum MethodOptions {
+        ExplictEluer, 
+        SemiImplictEluer,
+        ImplictEluer,
+        VerletIntegration,
+    };
+
+    [SerializeField]
+    private MethodOptions method = MethodOptions.ExplictEluer;
+    
+    public GameObject ObjHuman;
 
     bool upLeftFixed = true;
     bool upRightFixed = true;
@@ -63,12 +71,15 @@ public class human : MonoBehaviour {
     float[,,] df = new float[node_num, node_num, 9];
     Vector3[] b = new Vector3[node_num];
 
+    GameObject[] NodeSpheres = new GameObject[node_num];
+    RayTriangleCollision rayTriangle = new RayTriangleCollision();
+
     void Awake()
     {
         meshFilter = GetComponent<MeshFilter>();
         mesh = new Mesh();
         meshFilter.mesh = mesh;
-        ObjHuman = GameObject.Find("human");
+        //GameObject.Find("human");
 
         drawTriangle();
         InitConstraint();
@@ -83,7 +94,7 @@ public class human : MonoBehaviour {
             {
                 int idx = j * col + i;
                 float theta = i*2*Mathf.PI/col;
-                pos[idx] = pos_pre[idx] = pos_prepre[idx] = initial_pos[idx] = ObjHuman.transform.position + new Vector3((0.5f*j+dress_size1)*Mathf.Cos(theta), 10.5f-((float) j/1.5f), (0.5f*j+dress_size2)*Mathf.Sin(theta));
+                pos[idx] = pos_pre[idx] = pos_prepre[idx] = initial_pos[idx] = ObjHuman.transform.position + new Vector3((0.5f*j+dress_size1)*Mathf.Cos(theta), 0f-((float) j/1.5f), (0.5f*j+dress_size2)*Mathf.Sin(theta));
             }
         }
 
@@ -124,7 +135,7 @@ public class human : MonoBehaviour {
     }
 
     bool hasThisPos(int x, int y) {
-        return y >=0 && y < row;
+        return x >= 0 && x < col && y >=0 && y < row;
     }
 
     void ComputeForce()
@@ -446,37 +457,37 @@ public class human : MonoBehaviour {
 
     void Assemble()
     {
-        if (method==2) {ComputeJacobianForce();}
+        if (method==MethodOptions.ImplictEluer) {ComputeJacobianForce();}
         else {ComputeForce();}
 
         for (int i=col; i<node_num; i++) {
             acceleration[i] = force[i]/node_mass;
 
             // explict euler method
-            if (method==0) {
+            if (method==MethodOptions.ExplictEluer) {
                 velocity[i] = velocity_pre[i] + dt*acceleration[i];
                 pos[i] = pos_pre[i] + dt*velocity[i];
             }
             // semi-implict Eluer method
-            else if (method==1) {
+            else if (method==MethodOptions.SemiImplictEluer) {
                 velocity[i] = velocity_pre[i] + dt*acceleration[i];
                 pos[i] = pos_pre[i] + dt*velocity[i];
             }
             // implict Eluer method
-            else if (method==2) {
+            else if (method==MethodOptions.ImplictEluer) {
                 pos[i] = pos_pre[i] + dt*velocity[i];
             }
             // Verlet Integration
-            else if (method==3) {
+            else if (method==MethodOptions.VerletIntegration) {
                 Vector3 x = dt*acceleration[i];
                 pos[i] = 2.0f*pos_pre[i]-pos_prepre[i] + dt*x; 
                 velocity[i] = velocity_pre[i] + 0.5f*dt*(acceleration[i]+acceleration_pre[i]);
             }
-
+            
             // collision with human
             Vector3 center = new Vector3(ObjHuman.transform.position.x, pos[i].y, ObjHuman.transform.position.z);
             //Vector3 iniPos = new Vector3(initial_pos[i].x, pos[i].y, initial_pos[i].z);
-            float radius = ((ObjHuman.transform.position.y+10.5f-pos[i].y)/4)+dress_size1;
+            float radius = ((ObjHuman.transform.position.y-pos[i].y)/4)+dress_size1;
             float s_distance = Vector3.Distance(pos[i], center);
             if (s_distance < radius) {
                 Vector3 s_pos_dir = Vector3.Normalize(pos[i] - center);
@@ -513,6 +524,27 @@ public class human : MonoBehaviour {
 
     private void Update()
     {
+        if (Input.GetMouseButton(0)) {
+            Vector3 screenPos = Camera.main.WorldToScreenPoint(ObjHuman.transform.position);
+            Vector3 mousePos = new Vector3(Input.mousePosition.x, Input.mousePosition.y, screenPos.z);
+            ObjHuman.transform.position = Camera.main.ScreenToWorldPoint(mousePos);
+        }
 
+        if (Input.GetKey("w")) {
+            ObjHuman.transform.Translate(0.0f, 0.03f, 0.0f);
+        }
+        if (Input.GetKey("s")) {
+            ObjHuman.transform.Translate(0.0f, -0.03f, 0.0f);
+        }
+        if (Input.GetKey("a")) {
+            ObjHuman.transform.Translate(0.03f, 0.0f, 0.0f);
+        }
+        if (Input.GetKey("d")) {
+            ObjHuman.transform.Translate(-0.03f, 0.0f, 0.0f);
+        }
+        for (int i=0; i<col; i++) {
+            float theta = i*2*Mathf.PI/col;
+            pos[i] = ObjHuman.transform.position + new Vector3((dress_size1)*Mathf.Cos(theta), 0f, (dress_size2)*Mathf.Sin(theta));
+        }
     }
 }

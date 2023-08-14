@@ -19,7 +19,7 @@ df4 = pd.read_csv("stable_data/fast_energy1.txt", sep=" ")
 X_fast_1 = df4.iloc[0:, 1].astype(float)
 X_fast_1 = X_fast_1.to_numpy()[0:100]
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3.2, 4))
 
 x=np.arange(0,100)
 l1=plt.plot(x,X_fast_002,'y--',label='dt = 0.002s')

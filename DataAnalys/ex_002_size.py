@@ -30,7 +30,7 @@ X_ex_64_002 = X_ex_64_002.to_numpy()
 X_ex_64_002_Mean = np.mean(X_ex_64_002)
 X_ex_64_002_StdErr = np.std(X_ex_64_002, ddof=1) / np.sqrt(np.size(X_ex_64_002))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(5, 4))
 
 x=[1,2,3]
 y=[X_ex_8_002_Mean, X_ex_16_002_Mean, X_ex_32_002_Mean]

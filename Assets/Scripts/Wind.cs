@@ -10,7 +10,7 @@ public class Wind : MonoBehaviour
     StreamReader reader;
 
     float gravity = 9.8f;
-    float frontWindForce = 0f;
+    float frontWindForce = 5f;
     float Damp = 1;
     float ksStretch = 10000;
     float ksShear = 10000;
@@ -18,7 +18,7 @@ public class Wind : MonoBehaviour
     float springIniLen = 0.1f;
     float node_mass = 1;
     float dt = 0.002f;
-    const int node_row_num = 16;
+    const int node_row_num = 32;
     const float radius = 0.5f;
 
     Mesh mesh;
@@ -307,8 +307,8 @@ public class Wind : MonoBehaviour
         if (upRightFixed) {force[node_row_num-1]=Vector3.zero;}
         if (downLeftFixed) {force[node_row_num*(node_row_num-1)]=Vector3.zero;}
         if (downRightFixed) {force[node_row_num*node_row_num-1]=Vector3.zero;}
-        Debug.Log("   im_energy:   " + im_energy);
-        WriteData(" " + im_energy);
+        //Debug.Log("   im_energy:   " + im_energy);
+        //WriteData(" " + im_energy);
 
         for (int i = 0; i < node_num; i++) {
             inertia[i] = node_mass * (2 * pos[i] - pos_pre[i]);
@@ -408,6 +408,7 @@ public class Wind : MonoBehaviour
             }
             // Verlet Integration
             else if (method==MethodOptions.VerletIntegration) {
+                Debug.Log("vvvvvvvvvvvvvv");
                 Vector3 x = dt*acceleration[i];
                 pos[i] = 2.0f*pos_pre[i]-pos_prepre[i] + dt*x; 
                 velocity[i] = velocity_pre[i] + 0.5f*dt*(acceleration[i]+acceleration_pre[i]);

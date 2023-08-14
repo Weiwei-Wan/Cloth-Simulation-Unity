@@ -38,7 +38,7 @@ X_fast_16_02 = X_fast_16_02.to_numpy()
 X_fast_16_02_Mean = np.mean(X_fast_16_02)
 X_fast_16_02_StdErr = np.std(X_fast_16_02, ddof=1) / np.sqrt(np.size(X_fast_16_02))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3, 4))
 
 x=[0.001,0.002,0.005,0.01,0.02]
 y=[X_fast_16_001_Mean, X_fast_16_002_Mean, X_fast_16_005_Mean, X_fast_16_01_Mean, X_fast_16_02_Mean]

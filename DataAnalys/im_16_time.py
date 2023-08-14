@@ -73,7 +73,7 @@ X_im_16_02 = X_im_16_02.to_numpy()
 X_im_16_02_Mean = np.mean(X_im_16_02)
 X_im_16_02_StdErr = np.std(X_im_16_02, ddof=1) / np.sqrt(np.size(X_im_16_02))
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3, 4))
 
 x=[0.002,0.004,0.006,0.008,0.01,0.012,0.014,0.016,0.018,0.02]
 y=[X_im_16_002_Mean, X_im_16_004_Mean, X_im_16_006_Mean, X_im_16_008_Mean, X_im_16_01_Mean, X_im_16_012_Mean, X_im_16_014_Mean, X_im_16_016_Mean, X_im_16_018_Mean, X_im_16_02_Mean]

@@ -19,7 +19,7 @@ df4 = pd.read_csv("stable_data/ex_energy008.txt", sep=" ")
 X_ex_008 = df4.iloc[0:, 1].astype(float)
 X_ex_008 = X_ex_008.to_numpy()[0:100]
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(3.2, 4))
 
 x=np.arange(0,100)
 l1=plt.plot(x,X_ex_002,'y--',label='dt = 0.002s')
@@ -33,5 +33,5 @@ plt.ylim((1e-5, 1e31))
 plt.legend()
 
 plt.yscale('log')
-plt.savefig('./ex_stable.jpg', dpi=600)
+plt.savefig('./ex_stable2.jpg', dpi=600)
 plt.show()
