@@ -17,8 +17,8 @@ public class Wind : MonoBehaviour
     float ksBend = 10000;
     float springIniLen = 0.1f;
     float node_mass = 1;
-    float dt = 0.002f;
-    const int node_row_num = 32;
+    float dt = 0.02f;
+    const int node_row_num = 16;
     const float radius = 0.5f;
 
     Mesh mesh;

@@ -8,15 +8,15 @@ public class WindFast : MonoBehaviour
     StreamWriter writer;
     StreamReader reader;
 
-    float gravity = 0.98f;
-    float frontWindForce = 0.5f;
+    float gravity = 9.8f;
+    float frontWindForce = 5f;
     float Damp = 1;
-    float ksStretch = 1000;
-    float ksShear = 1000;
-    float ksBend = 1000;
+    float ksStretch = 10000;
+    float ksShear = 10000;
+    float ksBend = 10000;
     float springIniLen = 0.1f;
     float node_mass = 1f;
-    float dt = 0.02f;
+    float dt = 0.002f;
     const int node_row_num = 16;
     const float radius = 0.5f;
 
